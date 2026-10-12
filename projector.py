@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, Optional
 
 TASK_HEADING = "## Historical Task Snapshot"
 GOAL_HEADING = "## Goal"
@@ -67,8 +68,15 @@ class Limits:
 # --------------------------------------------------------------------------------------
 
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
-_CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]")
-_WS_RE = re.compile(r"\s+")
+# Control, bidi and zero-width characters. Every one is non-printable (Unicode Cc/Cf/Zl/Zp),
+# which is what lets clean() skip the replacement for text where str.isprintable() is true.
+_CTRL_RANGES = ((0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x7F), (0x200B, 0x200F), (0x2028, 0x2029),
+                (0x202A, 0x202E), (0x2066, 0x2069), (0xFEFF, 0xFEFF))
+_CTRL_RE = re.compile("[" + "".join(f"\\u{lo:04x}-\\u{hi:04x}" for lo, hi in _CTRL_RANGES) + "]")
+_CTRL_TABLE = {cp: " " for lo, hi in _CTRL_RANGES for cp in range(lo, hi + 1)}
+# The subset that str.split() does not already treat as whitespace. Only these need the
+# table: mapping a whitespace control character to " " first would change nothing.
+_HARD_CTRL_RE = re.compile("[" + "".join(f"\\u{cp:04x}" for cp in sorted(_CTRL_TABLE) if not chr(cp).isspace()) + "]")
 # Chat-template and role markers that could make quoted history read like live instructions.
 _MARKER_RE = re.compile(
     r"<\|[^|>]{0,40}\|>"                      # <|im_start|>, <|eot_id|>, <|start_header_id|> ...
@@ -85,20 +93,29 @@ _SCAN_TAIL = 2000
 
 
 def clean(text: str, limit: int) -> str:
-    """One safe, single-line excerpt of at most ``limit`` chars (head and tail kept)."""
+    """One safe, single-line excerpt of at most ``limit`` chars (head and tail kept).
+
+    Hot path: each step only runs when the text can contain what it rewrites (every ANSI
+    sequence starts with ESC, every marker with ``<`` or ``[``). Whitespace is collapsed
+    with ``split()``/``join``, which uses the same ``str.isspace`` definition as ``\\s``.
+    """
     if not text:
         return ""
     # Cut before the regex work so cost is bounded by ``limit``, not by the input size.
     window = limit * 2 + 64
     if len(text) > window * 2:
         text = text[:window] + " … " + text[-window:]
-    text = _ANSI_RE.sub("", text)
-    text = _MARKER_RE.sub("[marker]", text)
-    text = _CTRL_RE.sub(" ", text)
-    text = _HEADING_RE.sub("#", text)
-    text = text.replace("`", "'")
-    text = _WS_RE.sub(" ", text).strip()
-    return elide(text, limit)
+    if "\x1b" in text:
+        text = _ANSI_RE.sub("", text)
+    if "<" in text or "[" in text:
+        text = _MARKER_RE.sub("[marker]", text)
+    if not text.isprintable() and _HARD_CTRL_RE.search(text):
+        text = text.translate(_CTRL_TABLE)
+    if "##" in text:
+        text = _HEADING_RE.sub("#", text)
+    if "`" in text:
+        text = text.replace("`", "'")
+    return elide(" ".join(text.split()), limit)
 
 
 def elide(text: str, limit: int) -> str:
@@ -131,7 +148,7 @@ def content_text(content: Any) -> str:
         for part in content:
             if isinstance(part, str):
                 parts.append(part)
-            elif isinstance(part, Mapping):
+            elif type(part) is dict or isinstance(part, Mapping):
                 kind = part.get("type")
                 if kind in ("text", "input_text", "output_text") and isinstance(part.get("text"), str):
                     parts.append(part["text"])
@@ -140,9 +157,18 @@ def content_text(content: Any) -> str:
                 elif kind in ("file", "input_file", "document"):
                     parts.append("[file]")
         return " ".join(parts)
-    if isinstance(content, Mapping) and isinstance(content.get("text"), str):
+    if (type(content) is dict or isinstance(content, Mapping)) and isinstance(content.get("text"), str):
         return content["text"]
     return ""
+
+
+def _starts_with_brace(text: str) -> bool:
+    """``text.lstrip().startswith("{")`` without copying a possibly huge string."""
+    i = 0
+    n = len(text)
+    while i < n and text[i].isspace():
+        i += 1
+    return text.startswith("{", i)
 
 
 # --------------------------------------------------------------------------------------
@@ -163,18 +189,32 @@ _ERROR_TEXT_RE = re.compile(
     r"|exit(?:ed)? (?:code|status) [1-9]|non-zero exit",
     re.IGNORECASE,
 )
+# _has_error_text() answers "does _ERROR_TEXT_RE match?" without scanning every position.
+# Every alternative of the regex either is one of these lowercase phrases, or starts exactly
+# at an occurrence of one of these words, so matching only there gives the same answer.
+# Works on lowercased text, which is exact for case-insensitive matching unless the text
+# holds one of the four non-ASCII characters that fold onto ASCII letters (checked).
+_ERROR_PHRASES = ("traceback (most recent call last)", "command not found", "no such file or directory",
+                  "permission denied", "non-zero exit")
+_ERROR_WORD_RE = re.compile(r"\b(?:error|exception|fatal|panic)\b\s*[:!]")
+_ERROR_ANCHORED = (
+    ("error", _ERROR_WORD_RE), ("exception", _ERROR_WORD_RE), ("fatal", _ERROR_WORD_RE),
+    ("panic", _ERROR_WORD_RE), ("failed", re.compile(r"\bfailed\b")),
+    ("exit", re.compile(r"exit(?:ed)? (?:code|status) [1-9]")),
+)
+_ASCII_CASE_FOLDS = ("İ", "ı", "ſ", "K")  # İ ı ſ K: the only ones, checked exhaustively
 _EXIT_RE = re.compile(r'"exit_code"\s*:\s*(-?\d+)')
 _JSON_PARSE_MAX = 256 * 1024
 
 
-@dataclass
+@dataclass(slots=True)
 class _Call:
     name: str
     args: dict[str, Any]
     target: str
 
 
-@dataclass
+@dataclass(slots=True)
 class _Result:
     ok: bool
     status: str  # short status like "exit 0", "ok", "ERROR exit 2"
@@ -183,9 +223,9 @@ class _Result:
 
 
 def _parse_args(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, Mapping):
+    if type(raw) is dict or isinstance(raw, Mapping):
         return dict(raw)
-    if isinstance(raw, str) and raw.strip().startswith("{") and len(raw) <= _JSON_PARSE_MAX:
+    if isinstance(raw, str) and len(raw) <= _JSON_PARSE_MAX and _starts_with_brace(raw):
         try:
             value = json.loads(raw)
         except (ValueError, RecursionError):
@@ -199,15 +239,17 @@ def _stringify(value: Any) -> str:
         return value
     if isinstance(value, (list, tuple)):
         return ", ".join(_stringify(v) for v in value[:8])
-    if isinstance(value, Mapping):
+    if type(value) is dict or isinstance(value, Mapping):
         return " ".join(f"{k}={_stringify(v)}" for k, v in list(value.items())[:6])
     return "" if value is None else str(value)
 
 
 def _call_from(tc: Any) -> Optional[_Call]:
-    if not isinstance(tc, Mapping):
+    if not (type(tc) is dict or isinstance(tc, Mapping)):
         return None
-    fn = tc.get("function") if isinstance(tc.get("function"), Mapping) else tc
+    fn = tc.get("function")
+    if not (type(fn) is dict or isinstance(fn, Mapping)):
+        fn = tc
     name = fn.get("name") if isinstance(fn.get("name"), str) else ""
     if not name:
         return None
@@ -227,6 +269,23 @@ def _call_from(tc: Any) -> Optional[_Call]:
     return _Call(name=name, args=args, target=target)
 
 
+def _has_error_text(sample: str) -> bool:
+    """Exactly ``_ERROR_TEXT_RE.search(sample) is not None``, typically 10x+ faster."""
+    if not sample.isascii() and any(ch in sample for ch in _ASCII_CASE_FOLDS):
+        return _ERROR_TEXT_RE.search(sample) is not None
+    low = sample.lower()
+    for phrase in _ERROR_PHRASES:
+        if phrase in low:
+            return True
+    for word, pattern in _ERROR_ANCHORED:
+        i = low.find(word)
+        while i != -1:
+            if pattern.match(low, i):
+                return True
+            i = low.find(word, i + 1)
+    return False
+
+
 def _scan(text: str) -> str:
     if len(text) <= _SCAN_HEAD + _SCAN_TAIL:
         return text
@@ -235,9 +294,8 @@ def _scan(text: str) -> str:
 
 def _result_from(text: str, limits: Limits) -> _Result:
     """Classify one tool result cheaply. Big outputs are only ever sampled."""
-    stripped = text.lstrip()
     data: Optional[dict[str, Any]] = None
-    if stripped.startswith("{") and len(text) <= _JSON_PARSE_MAX:
+    if len(text) <= _JSON_PARSE_MAX and _starts_with_brace(text):
         try:
             parsed = json.loads(text)
             data = parsed if isinstance(parsed, dict) else None
@@ -277,7 +335,7 @@ def _result_from(text: str, limits: Limits) -> _Result:
     if match:
         exit_code = int(match.group(1))
     sample = _scan(text)
-    failed = (exit_code not in (None, 0)) or (exit_code is None and _ERROR_TEXT_RE.search(sample) is not None)
+    failed = (exit_code not in (None, 0)) or (exit_code is None and _has_error_text(sample))
     if failed:
         status = f"ERROR exit {exit_code}" if exit_code is not None else "ERROR"
         return _Result(False, status, clean(sample, limits.error_chars), files)
@@ -299,14 +357,14 @@ def _paths_in(call: _Call) -> list[str]:
 # --------------------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class _Line:
     text: str
     kind: str  # "user" | "assistant" | "call" | "result" | "note"
     keep: bool = False  # focus match or unresolved error: trimmed last
 
 
-@dataclass
+@dataclass(slots=True)
 class _Projection:
     task: str = ""
     goal: str = ""
@@ -345,12 +403,17 @@ def _project_turns(
     focus: tuple[str, ...],
 ) -> _Projection:
     proj = _Projection()
-    pending: dict[str, tuple[_Call, str]] = {}  # tool_call_id -> (call, ref of the call line)
+    # tool_call_id -> (call, ref of the call line, cleaned target as printed on that line)
+    pending: dict[str, tuple[_Call, str, str]] = {}
     first_user = ""
     last_user = ""
+    add_line = proj.lines.append
+    files = proj.files
+    blocked = proj.blocked
+    user_chars, assistant_chars, call_chars = limits.user_chars, limits.assistant_chars, limits.call_chars
 
     for index, msg in enumerate(turns):
-        if not isinstance(msg, Mapping):
+        if not (type(msg) is dict or isinstance(msg, Mapping)):
             continue
         role = msg.get("role")
         ref = _ref(msg, index)
@@ -359,53 +422,57 @@ def _project_turns(
             if not is_real_user(msg):
                 continue
             raw = content_text(msg.get("content"))
-            text = clean(raw, limits.user_chars)
+            text = clean(raw, user_chars)
             if not text:
                 continue
             if not first_user:
                 first_user = raw
             last_user = raw
-            proj.lines.append(_Line(f"{ref} user: {text}", "user", keep=True))
+            add_line(_Line(f"{ref} user: {text}", "user", True))
 
         elif role == "assistant":
-            text = clean(strip_think(content_text(msg.get("content"))), limits.assistant_chars)
+            text = clean(strip_think(content_text(msg.get("content"))), assistant_chars)
             if text:
-                proj.lines.append(_Line(f"{ref} assistant: {text}", "assistant"))
+                add_line(_Line(f"{ref} assistant: {text}", "assistant"))
             for tc in msg.get("tool_calls") or ():
                 call = _call_from(tc)
                 if call is None:
                     continue
-                target = clean(call.target, limits.call_chars)
-                proj.lines.append(_Line(f"{ref} → {call.name}: `{target}`" if target else f"{ref} → {call.name}", "call"))
-                tc_id = tc.get("id") if isinstance(tc, Mapping) else None
+                name = call.name
+                target = clean(call.target, call_chars)
+                add_line(_Line(f"{ref} → {name}: `{target}`" if target else f"{ref} → {name}", "call"))
+                tc_id = tc.get("id")  # _call_from only accepts mappings
                 if isinstance(tc_id, str) and tc_id:
-                    pending[tc_id] = (call, ref)
+                    pending[tc_id] = (call, ref, target)
                 for path in _paths_in(call):
-                    _add_file(proj.files, path, _FILE_VERBS.get(call.name, call.name))
-                if call.name in ("terminal", "shell", "bash", "run_command") and target:
+                    _add_file(files, path, _FILE_VERBS.get(name, name))
+                if target and name in ("terminal", "shell", "bash", "run_command"):
                     proj.commands.append(target)
 
         elif role == "tool":
             tc_id = msg.get("tool_call_id")
-            call, call_ref = pending.pop(tc_id, (None, "")) if isinstance(tc_id, str) else (None, "")
+            call, call_ref, call_target = (
+                pending.pop(tc_id, (None, "", "")) if isinstance(tc_id, str) else (None, "", ""))
             name = (call.name if call else None) or msg.get("tool_name") or msg.get("name") or "tool"
             result = _result_from(content_text(msg.get("content")), limits)
             for path in result.files:
-                _add_file(proj.files, path, _FILE_VERBS.get(str(name), "touched"))
+                _add_file(files, path, _FILE_VERBS.get(str(name), "touched"))
             key = f"{name}:{call.target[:200]}" if call else f"{name}:{ref}"
             if result.ok:
                 line = f"{ref} ← {name} {result.status}" + (f": {result.excerpt}" if result.excerpt else "")
-                proj.lines.append(_Line(line, "result"))
-                if key in proj.blocked:
-                    proj.fixes.append(f"{proj.blocked.pop(key)} → fixed at {ref}")
+                add_line(_Line(line, "result"))
+                if key in blocked:
+                    proj.fixes.append(f"{blocked.pop(key)} → fixed at {ref}")
             else:
                 line = f"{ref} ← {name} {result.status}: {result.excerpt}"
-                proj.lines.append(_Line(line, "result", keep=True))
-                where = f"{call_ref} {name} `{clean(call.target, limits.call_chars)}`" if call else f"{ref} {name}"
-                proj.blocked[key] = f"{where} — {result.status}: {clean(result.excerpt, 240)}"
+                add_line(_Line(line, "result", True))
+                where = f"{call_ref} {name} `{call_target}`" if call else f"{ref} {name}"
+                blocked[key] = f"{where} — {result.status}: {clean(result.excerpt, 240)}"
 
     if focus:
         for line in proj.lines:
+            if line.keep:
+                continue
             lowered = line.text.lower()
             if any(term in lowered for term in focus):
                 line.keep = True

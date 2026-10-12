@@ -198,3 +198,106 @@ def test_merge_with_llm_summary_keeps_it_bounded():
     assert p.EARLIER_HEADING in out and "### Key Decisions" in out
     assert "User Messages (verbatim" not in out and "Context Recovery" not in out
     assert len(out) <= 4000
+
+
+# ----------------------------------------------------------------------------- v0.2 fast paths
+# Every optimization must be byte-identical to v0.1.0. These tests pin that down exhaustively
+# where the input space allows it, and by large seeded fuzz runs where it doesn't.
+
+_REF_CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]")
+_REF_WS_RE = re.compile(r"\s+")
+_ALL_CHARS = [chr(cp) for cp in range(0x110000)]
+
+
+def _clean_reference(text, limit):
+    """clean() exactly as shipped in v0.1.0."""
+    if not text:
+        return ""
+    window = limit * 2 + 64
+    if len(text) > window * 2:
+        text = text[:window] + " … " + text[-window:]
+    text = p._ANSI_RE.sub("", text)
+    text = p._MARKER_RE.sub("[marker]", text)
+    text = _REF_CTRL_RE.sub(" ", text)
+    text = p._HEADING_RE.sub("#", text)
+    text = text.replace("`", "'")
+    text = _REF_WS_RE.sub(" ", text).strip()
+    return p.elide(text, limit)
+
+
+def test_ctrl_table_matches_the_v010_regex_for_every_code_point():
+    for ch in _ALL_CHARS:
+        assert (ord(ch) in p._CTRL_TABLE) == bool(_REF_CTRL_RE.match(ch)), repr(ch)
+        assert bool(p._CTRL_RE.match(ch)) == bool(_REF_CTRL_RE.match(ch)), repr(ch)
+
+
+def test_printable_text_never_contains_a_control_character():
+    # clean() skips the control-character pass when str.isprintable() is true
+    assert all(not chr(cp).isprintable() for cp in p._CTRL_TABLE)
+
+
+def test_split_join_equals_regex_whitespace_collapse_for_every_code_point():
+    for ch in _ALL_CHARS:
+        assert ch.isspace() == bool(_REF_WS_RE.fullmatch(ch)), repr(ch)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_clean_is_byte_identical_to_v010(seed):
+    rng = random.Random(seed)
+    alphabet = list("ab #`<>[]|/\\\n\t\r\x1b\x00\x07\u200b\u202e\u2028\u00a0\u3000\u0085\x1c ") + [
+        "<|im_start|>", "[INST]", "</s>", "<s>", "<<SYS>>", "<think>", "</tool_call>", "##", "###", "\x1b[31m",
+        "\x1b]0;t\x07", "\u2066", "é", "中", "🙂", "#\x1b[0m#", "<\x1b[0m|im_start|>", "`` `"]
+    for _ in range(25_000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 140)))
+        limit = rng.choice([0, 1, 5, 23, 24, 25, 60, 160, 600])
+        assert p.clean(text, limit) == _clean_reference(text, limit), (text, limit)
+
+
+def test_clean_is_byte_identical_on_long_inputs():
+    rng = random.Random(9)
+    for size in (5_000, 50_000, 400_000):
+        text = "".join(rng.choice("abc \n\t\x1b[0m<|x|>##`é\u200b") for _ in range(size))
+        for limit in (160, 600):
+            assert p.clean(text, limit) == _clean_reference(text, limit)
+
+
+def test_only_four_non_ascii_characters_fold_onto_ascii_letters():
+    ascii_letter = re.compile("[a-z]", re.IGNORECASE)
+    folds = {ch for ch in _ALL_CHARS if not ch.isascii() and ascii_letter.fullmatch(ch)}
+    assert folds == set(p._ASCII_CASE_FOLDS)
+
+
+def test_lowercasing_keeps_length_and_character_classes_outside_the_folds():
+    for ch in _ALL_CHARS:
+        if ch in p._ASCII_CASE_FOLDS:
+            continue
+        low = ch.lower()
+        assert len(low) == 1, repr(ch)
+        assert (ch.isalnum() or ch == "_") == (low.isalnum() or low == "_"), repr(ch)
+        assert ch.isspace() == low.isspace(), repr(ch)
+        assert ch.isascii() or not low.isascii(), repr(ch)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_fast_error_detection_matches_the_regex(seed):
+    rng = random.Random(100 + seed)
+    bits = ["Error:", "ERROR!", "error :", "errors:", "xerror:", "_error:", "éerror:", "erroré:", "Exception!",
+            "FATAL:", "panic:", "panic", "Traceback (most recent call last)", "TRACEBACK (MOST RECENT CALL LAST)",
+            "Traceback (most", "command not found", "Command Not Found", "No such file or directory",
+            "PERMISSION DENIED", "FAILED", "failed", "xfailed", "FAILEDx", "fäiled", "exit code 1", "Exited Status 3",
+            "exit code 0", "exitcode 1", "exit  code 1", "non-zero exit", "NON-ZERO EXIT", " ", "\n", "\t", "\u00a0",
+            "\u3000", "\u2028", "a", "_", "1", "é", "É", "ß", "Σ", "K", "ſ", "ı", "İ", "Ⅻ", ":", "!", "中", "🙂"]
+    for _ in range(100_000):
+        sample = "".join(rng.choice(bits) for _ in range(rng.randint(0, 24)))
+        assert p._has_error_text(sample) == (p._ERROR_TEXT_RE.search(sample) is not None), repr(sample)
+
+
+def test_control_characters_split_into_hard_and_whitespace():
+    # clean() only translates when a control character that split() would not already treat
+    # as whitespace is present; every other one becomes a space either way.
+    for cp in p._CTRL_TABLE:
+        ch = chr(cp)
+        assert ch.isspace() != bool(p._HARD_CTRL_RE.match(ch)), repr(ch)
+    for ch in _ALL_CHARS:
+        if p._HARD_CTRL_RE.match(ch):
+            assert ord(ch) in p._CTRL_TABLE, repr(ch)
