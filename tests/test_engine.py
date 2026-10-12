@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from conftest import ROOT, requires_hermes
+from transcripts import assistant, call, fix_the_build, long_session, result, terminal_turn, user
+
+pytestmark = requires_hermes
+
+
+@pytest.fixture()
+def cc():
+    import agent.context_compressor as module
+
+    return module
+
+
+@pytest.fixture()
+def no_llm(monkeypatch, cc):
+    calls = []
+
+    def forbidden(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("vcc must not call the summary LLM")
+
+    monkeypatch.setattr(cc, "call_llm", forbidden)
+    return calls
+
+
+def make_engine(**overrides):
+    import engine
+
+    kwargs = dict(config={}, config_context_length=100_000, protect_first_n=1, protect_last_n=2)
+    kwargs.update(overrides)
+    eng = engine.VccEngine(**kwargs)
+    eng.tail_token_budget = 50  # small verbatim tail so the fixtures actually compact
+    return eng
+
+
+def session(*parts):
+    msgs = [{"role": "system", "content": "You are Hermes."}]
+    for part in parts:
+        msgs.extend(part)
+    return msgs
+
+
+def summary_of(eng, messages):
+    found = [m for m in messages if eng._is_context_summary_message(m)]
+    assert len(found) == 1, f"expected one summary message, got {len(found)}"
+    content = found[0]["content"]
+    return content if isinstance(content, str) else json.dumps(content)
+
+
+def assert_tool_pairs_intact(messages):
+    open_ids = set()
+    for m in messages:
+        if m.get("role") == "assistant":
+            open_ids |= {tc["id"] for tc in m.get("tool_calls") or ()}
+        elif m.get("role") == "tool":
+            assert m["tool_call_id"] in open_ids, f"orphan tool result {m['tool_call_id']}"
+
+
+# ----------------------------------------------------------------------------- basics
+
+def test_hermes_api_has_every_seam_we_use():
+    import engine
+
+    assert engine._missing_seams() == []
+
+
+def test_name_and_mode():
+    eng = make_engine()
+    assert eng.name == "vcc"
+    assert eng._vcc_passthrough is False
+
+
+def test_compress_makes_no_llm_call_and_keeps_history_addressable(no_llm):
+    eng = make_engine()
+    messages = session(fix_the_build(), long_session(40, output_chars=1500), [user("what's next?")])
+    out = eng.compress(messages, force=True)
+
+    assert no_llm == []
+    text = summary_of(eng, out)
+    assert "vcc projection" in text
+    # the first user turn sits in Hermes's protected head; the goal is the first one compacted
+    assert "## Goal\nAudit the repo and clean up the logging module." in text
+    assert "→ fixed at [#" in text and "[#" in text
+    # Hermes's own lean sections are still appended after ours
+    assert "## User Messages (verbatim, newest first)" in text
+    assert_tool_pairs_intact(out)
+    assert sum(len(json.dumps(m)) for m in out) < sum(len(json.dumps(m)) for m in messages) / 3
+    assert eng._vcc_runs == 1 and eng._vcc_last_ms is not None
+
+
+def test_iterative_compaction_keeps_the_original_goal(no_llm):
+    eng = make_engine()
+    first = eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    second = eng.compress(first + long_session(30, output_chars=800, seed=9) + [user("status?")], force=True)
+    text = summary_of(eng, second)
+    assert "## Goal\nAudit the repo and clean up the logging module." in text
+    assert text.count("## Detailed Session Log") == 1
+    assert no_llm == []
+
+
+def test_session_without_user_turns_uses_hermes_sentinel(no_llm, cc):
+    eng = make_engine()
+    turns = [{"role": "system", "content": "cron"}]
+    for i in range(30):
+        turns += terminal_turn(f"c{i}", f"df -h /mnt/{i}", "ok " * 200)
+    out = eng.compress(turns, force=True)
+    text = summary_of(eng, out)
+    assert cc._NO_USER_TASK_SENTINEL in text
+    assert no_llm == []
+
+
+# ----------------------------------------------------------------------------- fallbacks
+
+def test_projection_error_falls_back_to_stock_llm_summary(monkeypatch, cc):
+    import engine
+
+    def boom(*a, **k):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(engine.projector, "project", boom)
+    requests = []
+
+    def fake_llm(**kwargs):
+        requests.append(kwargs)
+        return {"choices": [{"message": {"content": "## Goal\nfrom the llm"}, "finish_reason": "stop"}]}
+
+    monkeypatch.setattr(cc, "call_llm", fake_llm)
+    eng = make_engine()
+    out = eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert requests, "fallback should reach the stock summary path"
+    assert "from the llm" in summary_of(eng, out)
+    assert eng._vcc_fallbacks == 1
+
+
+def test_fallback_can_be_disabled(monkeypatch, no_llm):
+    import engine
+
+    monkeypatch.setattr(engine.projector, "project", lambda *a, **k: (_ for _ in ()).throw(ValueError("x")))
+    eng = make_engine(config={"context": {"vcc": {"fallback_to_llm": False}}})
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert no_llm == []
+    assert eng._vcc_fallbacks == 1
+
+
+def test_missing_seam_switches_to_passthrough(monkeypatch, cc):
+    import engine
+
+    monkeypatch.setattr(engine, "_missing_seams", lambda: ["_something_renamed"])
+    requests = []
+    monkeypatch.setattr(cc, "call_llm", lambda **k: requests.append(k) or
+                        {"choices": [{"message": {"content": "## Goal\nstock"}, "finish_reason": "stop"}]})
+    eng = make_engine()
+    assert eng._vcc_passthrough is True
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert requests
+
+
+# ----------------------------------------------------------------------------- config & trigger
+
+def test_trigger_defaults_to_75_percent_of_the_window():
+    eng = make_engine()
+    eng.update_model(model="local/qwen", context_length=98_304)
+    assert eng.threshold_tokens == int(98_304 * 0.75)
+
+
+def test_trigger_follows_context_changes():
+    eng = make_engine()
+    eng.update_model(model="local/qwen", context_length=98_304)
+    assert eng.threshold_tokens == 73_728
+    eng.update_model(model="local/qwen", context_length=131_072)
+    assert eng.threshold_tokens == 98_304
+    # Hermes itself raises the floor to 85% on windows near its 64K minimum; we inherit that
+    eng.update_model(model="local/qwen", context_length=65_536)
+    assert eng.threshold_tokens == int(65_536 * 0.85)
+
+
+def test_explicit_threshold_tokens_cap_is_respected():
+    eng = make_engine(config={"compression": {"threshold_tokens": 45_000}})
+    eng.update_model(model="local/qwen", context_length=98_304)
+    assert eng.threshold_tokens == 45_000
+
+
+def test_summariser_window_never_caps_the_trigger():
+    eng = make_engine()
+    eng._aux_context_ceiling = 8_000  # what the feasibility probe would install
+    eng.update_model(model="local/qwen", context_length=98_304)
+    assert eng.threshold_tokens == int(98_304 * 0.75)
+
+
+@pytest.mark.parametrize("junk", [None, "abc", -5, float("nan"), {"x": 1}, []])
+def test_config_junk_falls_back_to_defaults(junk):
+    import engine
+
+    kw = engine._compressor_kwargs({"compression": {"threshold": junk, "protect_last_n": junk,
+                                                    "threshold_tokens": junk, "model_thresholds": junk}})
+    assert 0.05 <= kw["threshold_percent"] <= 0.98
+    assert kw["threshold_tokens_cap"] is None
+    opts = engine._engine_options({"context": {"vcc": {"budget_ratio": junk, "max_budget_tokens": junk}}})
+    assert 0.01 <= opts["budget_ratio"] <= 0.30
+
+
+def test_summary_budget_is_small_relative_to_the_window():
+    eng = make_engine()
+    eng.update_model(model="local/qwen", context_length=98_304)
+    budget = eng._vcc_budget_chars(long_session(300, output_chars=3000))
+    assert budget <= int(98_304 * 0.06) * 4
+
+
+def test_clone_is_independent():
+    eng = make_engine()
+    twin = eng.clone_for_agent()
+    assert twin is not eng and type(twin) is type(eng) and twin.name == "vcc"
+    twin.update_model(model="other", context_length=50_000)
+    assert eng.model != "other"
+
+
+# ----------------------------------------------------------------------------- loading through Hermes
+
+def test_loads_through_hermes_user_plugin_dir(sandbox_home):
+    plugins = sandbox_home / "plugins"
+    plugins.mkdir(exist_ok=True)
+    link = plugins / "vcc"
+    if not link.exists():
+        os.symlink(ROOT, link, target_is_directory=True)
+    from plugins.context_engine import load_context_engine
+
+    eng = load_context_engine("vcc")
+    assert eng is not None and eng.name == "vcc"
+    assert type(eng).__mro__[1].__name__ == "ContextCompressor"
