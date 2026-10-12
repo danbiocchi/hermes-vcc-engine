@@ -10,15 +10,17 @@ Idea and naming come from [VCC](https://github.com/lllyasviel/VCC) ([paper](http
 
 ## Numbers
 
-Projection time and size on real Hermes sessions from my `state.db` (Ryzen 5 2600X, Python 3.14):
+Time for the whole summary step (projection, Hermes's own anchor/user sections, redaction) on real sessions from my `state.db`. Median of 7 runs, Ryzen 5 2600X, the Python 3.14 that ships with Hermes:
 
-| session | messages | tokens in | tokens out | time |
+| session | messages | tokens in | v0.1 | v0.2 |
 |---|---:|---:|---:|---:|
-| big refactor | 1,486 | ~695k | 5.9k | 77 ms |
-| typical tool-heavy | 254 | ~79k | 4.0k | 22 ms |
-| short | 93 | ~28k | 2.9k | 2.4 ms |
+| big refactor (full history) | 1,486 | ~695k | 325 ms | 149 ms |
+| typical tool-heavy | 254 | ~79k | 71 ms | 34 ms |
+| short | 93 | ~28k | 21 ms | 17 ms |
 
 For comparison, the stock compressor on the same box (Qwen3.8-27B IQ3_S on a GTX 1080 + 1070, llama.cpp) took 237 s, 365 s, 553 s and 781 s for its last four compactions, plus one I interrupted after 15 minutes. That was before I tuned llama.cpp properly; tuned, it's maybe 3-4x faster. Still minutes.
+
+v0.2 produces byte-for-byte the same summaries as v0.1. That's checked, not assumed: `bench/bench.py` hashes 126 outputs (13 real sessions plus 8 seeded stress transcripts, one- and two-step compactions, full `compress()` passes) and every hash matches what v0.1 produced on the same frozen inputs.
 
 What you still pay after any compaction is the model re-reading the shorter context (prompt processing), since the prompt cache can't survive the rewrite. The projection is budgeted small (6% of the window by default) to keep that short.
 
@@ -82,6 +84,7 @@ context:
     min_budget_tokens: 1500
     max_budget_tokens: 8000
     fallback_to_llm: true    # if a projection ever fails, use the stock summary for that pass
+    fast_anchors: true       # build Hermes's anchor index the fast way (same output); false = Hermes's builder
 ```
 
 The usual `compression:` settings (threshold, threshold_tokens, protect_first_n, protect_last_n, tail_mode, model_thresholds) are read and honored the same way the built-in compressor does. Hermes doesn't hand those to plugin engines, so the engine reads them itself.
@@ -95,6 +98,32 @@ The engine is a subclass of Hermes's own `ContextCompressor` that overrides exac
 Registered through `ctx.register_context_engine`, no monkeypatching. `hermes plugins validate` passes with a clean security scan.
 
 If a Hermes update renames something this relies on, the engine notices at startup, logs one warning and behaves exactly like the stock compressor until it's updated. If a projection throws for any reason, that pass falls back to the normal LLM summary. Worst case is the behavior you had before installing it.
+
+## How v0.2 got faster
+
+Profiling real compactions showed the time wasn't where I expected. On the biggest session, half of it was Hermes's anchor index (regexes over every character of the compacted region), a quarter was the projector, and the projector's time was mostly regex passes and `isinstance` checks against `typing.Mapping`. Everything below keeps the output identical:
+
+- **Text cleanup.** Each rewrite step now only runs when the text can contain what it rewrites (an ANSI sequence needs ESC, a chat marker needs `<` or `[`), and whitespace is collapsed with `split()`/`join` instead of a regex. Both are provably the same; the tests check the character tables against the old regexes for all 1,114,112 code points.
+- **Error detection.** The case-insensitive "does this output look like an error" regex was the slowest thing left. Every alternative in it is either a fixed phrase or starts at a fixed word, so the text is lowercased once and the regex only runs where one of those words occurs. Lowercasing is only exact if the text has none of the four non-ASCII characters that fold onto ASCII letters (`İ ı ſ K`, found by an exhaustive scan); if it does, the original regex runs. About 13x faster on real outputs.
+- **Anchor index.** All of Hermes's anchor patterns are line-local, and each needs a literal (`.py`, `fix/`, `Error`, `http` ...), so each pattern now only scans the lines containing its literal. Commit hashes have no literal, so those lines are found with a `bytes.translate` hex mask over the UTF-8 text. Dense text falls back to a full scan. The result is checked against Hermes's own builder at startup and on the first real compaction of every process; any difference switches the fast path off. About 2.8x faster on the big session.
+- **Small stuff.** `dict` fast paths, slotted dataclasses, no copying multi-megabyte tool results just to check their first character.
+
+What I tried and didn't ship:
+
+- Dropping the second redaction pass over the previous summary looked free, but Hermes's redactor isn't idempotent (a second pass masks partial secrets the first left visible), so removing it would have meant less redaction. It stays.
+- CPython 3.14's JIT: no measurable difference. The hot paths are regex, JSON and string methods, which are already C.
+- Shrinking the summary. On real sessions only 3.4% of summary tokens are exact duplicates, and the tokenizer charges the same for `→` as for `->`, so there was nothing to cut without dropping information.
+
+## Research notes
+
+Things I read and measured while tuning this, in case they're useful to someone else:
+
+- The JetBrains/TUM paper [The Complexity Trap](https://arxiv.org/abs/2508.21433) found that simply masking old tool output is about as good as LLM summarization for SWE agents at roughly half the cost, and that summaries can make agents run longer. Deterministic projection is in the same family as masking, with pointers back to the original.
+- Factory's [compression evals](https://factory.com/news/evaluating-compression) are the best write-up I found on measuring this. Artifact tracking (which files were touched) was the weakest area for every method they tested, and the target to optimize is tokens per task, not tokens per request. That's why this keeps exact paths and commands and doesn't try to squeeze the summary further.
+- Prompt compressors like [LLMLingua-2](https://arxiv.org/abs/2403.12968) drop tokens with a small model. Out of domain the accuracy drops can be large, so it's the wrong tool when exact identifiers matter.
+- Chroma's [context rot](https://research.trychroma.com/context-rot) report and [Lost in the Middle](https://arxiv.org/abs/2307.03172) are the reasons to keep the summary small and to keep the newest material at the end.
+- Manus's [context engineering notes](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus): KV-cache hit rate is the number that matters, keep the prefix stable, and make compression restorable. The `[#N]` pointers are the restorable part.
+- Token-saving formats like TOON benchmark well in their own suites and poorly in independent ones. Not worth it here.
 
 ## Safety
 
@@ -117,8 +146,17 @@ uv venv --python 3.14 && uv pip install pytest
 .venv/bin/python -m pytest -q
 ```
 
-Projector tests run anywhere. Engine tests run against a real Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They mock the LLM to fail if it's ever called, run full `compress()` passes, check the trigger math and load the plugin through Hermes's actual loader. Tests never touch your real profile; `HERMES_HOME` is sandboxed.
+Projector tests run anywhere. Engine and anchor tests run against a real Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They mock the LLM to fail if it's ever called, run full `compress()` passes, compare the fast anchor index with Hermes's own, check the trigger math and load the plugin through Hermes's actual loader. Tests never touch your real profile; `HERMES_HOME` is sandboxed.
+
+Before changing anything that affects output, record a baseline and check against it afterwards. Run the bench with the Python Hermes uses:
+
+```bash
+~/.hermes/tools/python-*/bin/python3 -I bench/bench.py --write-golden   # before
+~/.hermes/tools/python-*/bin/python3 -I bench/bench.py --check-golden   # after
+```
+
+`--write-golden` freezes the transcripts it read into a private file under `~/.cache` (mode 0600, never in the repo) so a session that keeps growing can't look like a regression. `--repo` points at another checkout to time two versions side by side.
 
 ## License
 
-Apache-2.0
+Apache-2.0. `anchors.py` mirrors the structure of Hermes's anchor index builder (MIT), see [NOTICE](NOTICE).
