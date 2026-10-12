@@ -234,3 +234,99 @@ def test_loads_through_hermes_user_plugin_dir(sandbox_home):
     eng = load_context_engine("vcc")
     assert eng is not None and eng.name == "vcc"
     assert type(eng).__mro__[1].__name__ == "ContextCompressor"
+
+
+# ----------------------------------------------------------------------------- v0.2 fast anchors
+
+@pytest.fixture(autouse=True)
+def _fresh_fast_anchor_state():
+    import anchors
+    import engine
+
+    def reset():
+        engine._FAST_ANCHORS.update({"fixture_ok": None, "live_ok": False, "disabled": ""})
+        anchors._FOOTER = None
+
+    reset()
+    yield
+    reset()
+
+
+_T_ONE = session(fix_the_build(), long_session(60, output_chars=900))
+_T_TWO_A = long_session(40, output_chars=700, seed=3)
+_T_TWO_B = long_session(40, output_chars=700, seed=4) + [user("and now?")]
+
+
+def _summaries(fast: bool):
+    """Same transcripts every call (ids come from a global counter in transcripts.py)."""
+    import engine
+
+    engine._FAST_ANCHORS.update({"fixture_ok": None, "live_ok": False, "disabled": ""})
+    cfg = {"context": {"vcc": {"fast_anchors": fast}}}
+    first = make_engine(config=cfg)._generate_summary(list(_T_ONE))
+    two = make_engine(config=cfg)
+    a = two._generate_summary(list(_T_TWO_A))
+    b = two._generate_summary(list(_T_TWO_B))
+    return first, a, b
+
+
+def test_fast_anchors_change_no_output(no_llm):
+    assert _summaries(fast=True) == _summaries(fast=False)
+    assert no_llm == []
+
+
+def test_fast_anchor_path_is_actually_used():
+    import engine
+
+    eng = make_engine()
+    eng._generate_summary(session(fix_the_build(), long_session(30, output_chars=800)))
+    assert engine._FAST_ANCHORS["live_ok"] is True
+    assert eng.get_status()["vcc_fast_anchors"] == "on"
+
+
+def test_shadow_mismatch_turns_the_fast_path_off(monkeypatch, no_llm):
+    import anchors
+    import engine
+
+    expected = _summaries(fast=False)
+    real_build = anchors.build
+    monkeypatch.setattr(anchors, "build", lambda turns, cc=None: real_build(turns, cc) + "tampered")
+    engine._FAST_ANCHORS.update({"fixture_ok": True, "live_ok": False, "disabled": ""})
+    eng = make_engine()
+    out = eng._generate_summary(list(_T_ONE))
+    assert out == expected[0]
+    assert "differed" in engine._FAST_ANCHORS["disabled"]
+    assert eng.get_status()["vcc_fast_anchors"].startswith("off")
+    assert no_llm == []
+
+
+def test_fast_anchor_errors_never_reach_the_llm_fallback(monkeypatch, no_llm):
+    import anchors
+    import engine
+
+    expected = _summaries(fast=False)
+    monkeypatch.setattr(anchors, "build", lambda *a, **k: (_ for _ in ()).throw(MemoryError("boom")))
+    engine._FAST_ANCHORS.update({"fixture_ok": True, "live_ok": True, "disabled": ""})
+    eng = make_engine()
+    out = eng._generate_summary(list(_T_ONE))
+    assert out == expected[0]
+    assert eng._vcc_fallbacks == 0
+    assert no_llm == []
+
+
+def test_failed_self_check_keeps_hermes_builder(monkeypatch, no_llm):
+    import anchors
+    import engine
+
+    expected = _summaries(fast=False)
+    monkeypatch.setattr(anchors, "verify", lambda cc=None: False)
+    engine._FAST_ANCHORS.update({"fixture_ok": None, "live_ok": False, "disabled": ""})
+    eng = make_engine()
+    assert eng._generate_summary(list(_T_ONE)) == expected[0]
+    assert "self-check" in engine._FAST_ANCHORS["disabled"]
+
+
+def test_legacy_tail_mode_never_adds_an_anchor_section(cc):
+    eng = make_engine(config={"compression": {"tail_mode": "legacy"}})
+    out = eng._generate_summary(session(fix_the_build(), long_session(30, output_chars=800)))
+    assert cc._LEAN_ANCHOR_HEADING not in out

@@ -20,8 +20,9 @@ from typing import Any, Mapping, Optional
 from agent.context_compressor import ContextCompressor
 
 try:  # loaded as a package (Hermes plugin loader)
-    from . import projector
+    from . import anchors, projector
 except ImportError:  # loaded as a top-level module (tests, tooling)
+    import anchors  # type: ignore[no-redef]
     import projector  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,20 @@ _DEFAULTS: dict[str, Any] = {
     "min_budget_tokens": 1500,
     "max_budget_tokens": 8000,
     "fallback_to_llm": True,     # on an unexpected projection error, use the stock summary
+    "fast_anchors": True,        # build Hermes's anchor index with anchors.py (same output, faster)
 }
 _CHARS_PER_TOKEN = 4  # same rough ratio Hermes's own estimator uses
+
+# anchors.build() must reproduce Hermes's anchor index byte for byte. It is checked against
+# Hermes's builder once per process on an edge-case fixture and again on the first real
+# compaction; any disagreement or error turns it off for the rest of the process.
+_FAST_ANCHORS: dict[str, Any] = {"fixture_ok": None, "live_ok": False, "disabled": ""}
+
+
+def _disable_fast_anchors(reason: str) -> None:
+    if not _FAST_ANCHORS["disabled"]:
+        _FAST_ANCHORS["disabled"] = reason
+        logger.warning("vcc: fast anchor index off (%s); Hermes builds it as usual", reason)
 
 
 def _load_hermes_config() -> Mapping[str, Any]:
@@ -119,6 +132,7 @@ def _engine_options(cfg: Mapping[str, Any]) -> dict[str, Any]:
         "max_budget_tokens": int(_num(raw.get("max_budget_tokens", _DEFAULTS["max_budget_tokens"]),
                                       _DEFAULTS["max_budget_tokens"], 500, 100_000)),
         "fallback_to_llm": bool(raw.get("fallback_to_llm", _DEFAULTS["fallback_to_llm"])),
+        "fast_anchors": bool(raw.get("fast_anchors", _DEFAULTS["fast_anchors"])),
     }
 
 
@@ -181,8 +195,39 @@ class VccEngine(ContextCompressor):
             "vcc_runs": self._vcc_runs,
             "vcc_fallbacks": self._vcc_fallbacks,
             "vcc_last_ms": self._vcc_last_ms,
+            "vcc_fast_anchors": (
+                "off (config)" if not self._vcc_options["fast_anchors"]
+                else f"off ({_FAST_ANCHORS['disabled']})" if _FAST_ANCHORS["disabled"]
+                else "on" if _FAST_ANCHORS["live_ok"] else "pending first check"
+            ),
         })
         return status
+
+    def _vcc_fast_anchor_section(self, cc: Any, summary: str, turns: list[dict[str, Any]]) -> Optional[str]:
+        """Hermes's anchor section for ``turns``, built faster. ``None`` leaves it to Hermes."""
+        state = _FAST_ANCHORS
+        if not self._vcc_options["fast_anchors"] or state["disabled"]:
+            return None
+        if getattr(self, "tail_mode", "lean") != "lean":
+            return None  # Hermes adds no lean sections in legacy mode
+        try:
+            if state["fixture_ok"] is None:
+                state["fixture_ok"] = anchors.verify(cc)
+                if not state["fixture_ok"]:
+                    _disable_fast_anchors("self-check against Hermes's builder failed")
+                    return None
+            if cc._LEAN_ANCHOR_HEADING in summary:
+                return None  # Hermes would skip the section, so must we
+            fast = anchors.build(turns, cc)
+            if not state["live_ok"]:
+                if fast != cc._build_anchor_index(turns):
+                    _disable_fast_anchors("differed from Hermes's builder on a real compaction")
+                    return None
+                state["live_ok"] = True
+            return fast or None
+        except Exception as exc:  # the optimization must never be the reason a compaction fails
+            _disable_fast_anchors(f"{type(exc).__name__}: {exc}")
+            return None
 
     # ------------------------------------------------------------------ summary override
 
@@ -242,6 +287,11 @@ class VccEngine(ContextCompressor):
             summary = cc._redact_compaction_text(body)
             summary = cc._reinject_pruned_skill_markers(summary, pruned_skills)
             summary = self._ground_historical_task_snapshot(summary, turns_to_summarize)
+            anchor_section = self._vcc_fast_anchor_section(cc, summary, turns_to_summarize)
+            if anchor_section:
+                # _augment_summary_lean skips any section whose heading is already present, so
+                # this replaces only Hermes's slow anchor scan; the rest is still its own code.
+                summary += cc._redact_compaction_text(anchor_section)
             summary = self._augment_summary_lean(summary, turns_to_summarize)
             self._validate_summary_user_provenance(summary, has_user_turn)
         except AuxiliaryExplicitCancellation:
