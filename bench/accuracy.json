@@ -1,0 +1,126 @@
+{
+ "model": "local-27b-iq3s",
+ "regions": 4,
+ "conditions": [
+  "FULL",
+  "VCC",
+  "VCC+RECALL",
+  "STOCK"
+ ],
+ "overall": {
+  "FULL": {
+   "correct": 20,
+   "total": 26,
+   "accuracy": 0.769
+  },
+  "VCC": {
+   "correct": 18,
+   "total": 26,
+   "accuracy": 0.692
+  },
+  "VCC+RECALL": {
+   "correct": 19,
+   "total": 26,
+   "accuracy": 0.731
+  },
+  "STOCK": {
+   "correct": 8,
+   "total": 26,
+   "accuracy": 0.308
+  }
+ },
+ "per_region": [
+  {
+   "session": "session-a",
+   "region_messages": 60,
+   "probes": 8,
+   "scores": {
+    "FULL": [
+     7,
+     8
+    ],
+    "VCC": [
+     6,
+     8
+    ],
+    "VCC+RECALL": [
+     7,
+     8
+    ],
+    "STOCK": [
+     1,
+     8
+    ]
+   }
+  },
+  {
+   "session": "session-b",
+   "region_messages": 74,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     3,
+     6
+    ],
+    "VCC": [
+     3,
+     6
+    ],
+    "VCC+RECALL": [
+     3,
+     6
+    ],
+    "STOCK": [
+     2,
+     6
+    ]
+   }
+  },
+  {
+   "session": "session-c",
+   "region_messages": 32,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     5,
+     6
+    ],
+    "VCC": [
+     4,
+     6
+    ],
+    "VCC+RECALL": [
+     4,
+     6
+    ],
+    "STOCK": [
+     1,
+     6
+    ]
+   }
+  },
+  {
+   "session": "session-d",
+   "region_messages": 18,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     5,
+     6
+    ],
+    "VCC": [
+     5,
+     6
+    ],
+    "VCC+RECALL": [
+     5,
+     6
+    ],
+    "STOCK": [
+     4,
+     6
+    ]
+   }
+  }
+ ]
+}

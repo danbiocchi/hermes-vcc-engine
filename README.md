@@ -71,6 +71,55 @@ forced into one 24k-char summary; in practice Hermes compacts incrementally and 
 Beyond those caps the long tail is not deleted, it stays in `state.db` and is what
 `session_search` is for.
 
+### End-to-end accuracy (does the model still answer correctly?)
+
+Retention and references are properties of the text. This asks the question that actually
+matters: give the model only a compacted summary, and can it still answer factual questions
+about the work? `bench/accuracy.py` generates the questions from the transcript (not with a
+model) so each has one checkable answer — a path, an exit outcome, an error name, a yes/no with
+planted absent-fact controls — then asks the identical questions under each context.
+
+6 regions of real sessions, 45 questions, Qwen3.8-27B locally, answers graded by rule:
+
+| context given to the model | correct | accuracy | 95% interval |
+|---|---:|---:|---|
+| FULL transcript (upper bound) | 31 / 45 | 0.689 | [0.543, 0.805] |
+| **vcc summary** | **31 / 45** | **0.689** | [0.543, 0.805] |
+| vcc summary + `[#N]` lookup | 30 / 45 | 0.667 | [0.521, 0.786] |
+
+Because every context answers the same questions, the right test is McNemar's exact test on the
+pairs where two contexts disagree. FULL and vcc disagree on 6 questions and split them **3–3**
+(p = 1.000): the summary and the full transcript are indistinguishable here, not merely close on
+average. `bench/analyze.py` prints this.
+
+Read that as "no detectable loss on this probe set", not "proven identical" — 45 questions gives
+a ±13pp interval, and ~69% is this local model's ceiling on these questions, not a score for the
+engine. The `[#N]` lookup condition landing 1 lower is noise by the same test (p = 1.000); it
+sometimes spends its answer on a lookup that did not help.
+
+A separate run also compared the LLM summary this engine replaces, on the same 26-question
+subset: **FULL 20/26, vcc 18/26, vcc+lookup 19/26, stock LLM summary 8/26**. The reason is
+checkable rather than mysterious — of the facts those questions asked about, the vcc summary
+contained 7/7 while Hermes's anchor index contained 3/7, and the local model's narrative dropped
+the exact commands and paths. Caveat: that is the stock compressor *driven by a 27B local model*,
+which is this plugin's use case; a frontier model would write a far better summary.
+
+### Reproducing all of it
+
+```bash
+PY=~/.hermes/tools/python-*/bin/python3          # the interpreter Hermes itself uses
+
+$PY -I bench/bench.py   --write-golden            # freeze inputs + record output hashes
+$PY -I bench/bench.py   --check-golden            # timings + byte-identity vs the golden
+$PY -I bench/proofs.py                            # faithfulness, negative control, retention, references
+$PY -I bench/proofs.py  --synthetic               # same proofs on generated data, no private corpus (CI runs this)
+$PY -I bench/accuracy.py --model <your-model-id>  # model-level accuracy (needs the GPU, slow)
+python   bench/analyze.py bench/accuracy-paired.json
+```
+
+Neither harness prints transcript text; output is scores, counts and hashes. `--write-golden`
+keeps its frozen corpus in `~/.cache/hermes-vcc-engine/` at mode 0600, never in the repo.
+
 What you still pay after any compaction is the model re-reading the shorter context (prompt
 processing), since the prompt cache cannot survive the rewrite. The projection is budgeted small
 (6% of the window by default) to keep that re-read short.

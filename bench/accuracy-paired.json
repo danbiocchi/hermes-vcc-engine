@@ -1,0 +1,424 @@
+{
+ "model": "local-27b-iq3s",
+ "regions": 6,
+ "conditions": [
+  "FULL",
+  "VCC",
+  "VCC+RECALL"
+ ],
+ "overall": {
+  "FULL": {
+   "correct": 31,
+   "total": 45,
+   "accuracy": 0.689
+  },
+  "VCC": {
+   "correct": 31,
+   "total": 45,
+   "accuracy": 0.689
+  },
+  "VCC+RECALL": {
+   "correct": 30,
+   "total": 45,
+   "accuracy": 0.667
+  }
+ },
+ "per_region": [
+  {
+   "session": "session-a",
+   "region_messages": 60,
+   "probes": 8,
+   "scores": {
+    "FULL": [
+     7,
+     8
+    ],
+    "VCC": [
+     6,
+     8
+    ],
+    "VCC+RECALL": [
+     7,
+     8
+    ]
+   },
+   "paired": [
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 0,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "any_of",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    }
+   ]
+  },
+  {
+   "session": "session-b",
+   "region_messages": 74,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     3,
+     6
+    ],
+    "VCC": [
+     3,
+     6
+    ],
+    "VCC+RECALL": [
+     3,
+     6
+    ]
+   },
+   "paired": [
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "any_of",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "keywords",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    }
+   ]
+  },
+  {
+   "session": "session-c",
+   "region_messages": 32,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     5,
+     6
+    ],
+    "VCC": [
+     4,
+     6
+    ],
+    "VCC+RECALL": [
+     4,
+     6
+    ]
+   },
+   "paired": [
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "keywords",
+     "FULL": 1,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    }
+   ]
+  },
+  {
+   "session": "session-d",
+   "region_messages": 18,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     5,
+     6
+    ],
+    "VCC": [
+     5,
+     6
+    ],
+    "VCC+RECALL": [
+     5,
+     6
+    ]
+   },
+   "paired": [
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "keywords",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    }
+   ]
+  },
+  {
+   "session": "session-e",
+   "region_messages": 17,
+   "probes": 6,
+   "scores": {
+    "FULL": [
+     3,
+     6
+    ],
+    "VCC": [
+     4,
+     6
+    ],
+    "VCC+RECALL": [
+     4,
+     6
+    ]
+   },
+   "paired": [
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 1,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "any_of",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "keywords",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 1
+    }
+   ]
+  },
+  {
+   "session": "session-f",
+   "region_messages": 19,
+   "probes": 13,
+   "scores": {
+    "FULL": [
+     8,
+     13
+    ],
+    "VCC": [
+     9,
+     13
+    ],
+    "VCC+RECALL": [
+     7,
+     13
+    ]
+   },
+   "paired": [
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "any_of",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 0,
+     "VCC": 1,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 0,
+     "VCC": 1,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "succeed_fail",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 1,
+     "VCC+RECALL": 1
+    },
+    {
+     "kind": "yesno",
+     "FULL": 1,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    },
+    {
+     "kind": "yesno",
+     "FULL": 0,
+     "VCC": 0,
+     "VCC+RECALL": 0
+    }
+   ]
+  }
+ ]
+}

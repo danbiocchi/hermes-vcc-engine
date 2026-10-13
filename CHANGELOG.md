@@ -8,6 +8,8 @@ Same output as 0.1.0, byte for byte, in a lot less time. The engine's summary st
 - `anchors.py`: Hermes's anchor index built by scanning only the lines each pattern can match. Checked against Hermes's builder at startup and on the first real compaction; any mismatch turns it off. New option `context.vcc.fast_anchors`.
 - `bench/bench.py`: benchmark plus byte-identity harness over a frozen corpus of real and synthetic transcripts.
 - Exhaustive tests over every Unicode code point for each text-handling shortcut.
+- `bench/proofs.py`: faithfulness (every log line quotes its cited message), a negative control that a planted fabrication is rejected, reference integrity through Hermes's own `session_search`, and retention per compression ratio. Runs standalone with `--synthetic` and is enforced in CI.
+- `bench/accuracy.py` + `bench/analyze.py`: model-level accuracy under FULL / vcc / vcc+lookup / stock-LLM-summary contexts, compared with McNemar's exact test.
 
 ## 0.1.0
 

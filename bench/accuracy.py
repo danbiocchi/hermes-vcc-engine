@@ -271,13 +271,16 @@ def run(args) -> int:
 
         rendered = {m["_row_id"]: render_full(projector, [m]) for m in region if isinstance(m.get("_row_id"), int)}
         scores = {c: [0, 0] for c in conditions}
+        # Paired per-probe outcomes (grade kind + correctness only, never content) so the
+        # conditions can be compared with McNemar's test instead of eyeballing totals.
+        paired = [{"kind": pr["grade"]} for pr in probes]
         # Condition outer, probes inner: the context prefix stays in llama.cpp's prompt cache,
         # so each condition pays one prefill instead of one per question.
         for c in conditions:
             ctx = contexts[c]
             if ctx is None:
                 continue
-            for probe in probes:
+            for idx, probe in enumerate(probes):
                 if c == "VCC+RECALL":
                     ok = _ask_with_recovery(args, ctx, probe, rendered)
                 else:
@@ -286,8 +289,9 @@ def run(args) -> int:
                 scores[c][1] += 1
                 totals[c][0] += int(ok)
                 totals[c][1] += 1
+                paired[idx][c] = int(ok)  # by position: identical probes must not collide
         per_region.append({"session": sid[:12], "region_messages": len(region), "probes": len(probes),
-                           "scores": {c: scores[c] for c in conditions}})
+                           "scores": {c: scores[c] for c in conditions}, "paired": paired})
         print(f"[{regions_done}/{args.regions}] {sid[:12]} probes={len(probes)} "
               + " ".join(f"{c}={scores[c][0]}/{scores[c][1]}" for c in conditions), flush=True)
 
