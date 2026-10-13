@@ -2,7 +2,7 @@
 # Bump `sha` (and `version`) to whatever commit you want reviewed; it must be a full 40-char SHA.
 name: hermes-vcc-engine
 repo: https://github.com/danbiocchi/hermes-vcc-engine
-sha: 734e6eedab80d4b271f8be7a00b24ba9793c500f
+sha: 82f316c92c8745a69f0114d3e82f3c0a4000743f
 description: 'Context engine that compacts without an LLM call: a deterministic projection of the transcript
   with [#N] references back to every original message (recoverable via session_search). Milliseconds instead
   of minutes on slow or local models.'
