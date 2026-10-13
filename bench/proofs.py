@@ -33,11 +33,22 @@ REF = re.compile(r"\[#(\d+)\]")
 ALNUM_RUN = re.compile(r"[A-Za-z0-9]{2,}")
 
 
-def _setup(repo: Path, hermes_dir: Path) -> None:
-    sys.path.insert(0, str(hermes_dir))
-    import hermes_bootstrap  # noqa: F401
+def _setup(repo: Path, hermes_dir: Path) -> bool:
+    """Put the plugin on the path, and Hermes too when it is available.
 
+    The faithfulness, negative-control and retention proofs need only ``projector``, so they
+    run anywhere (CI included). Reference integrity needs Hermes's ``session_search`` and a
+    real ``state.db``; the caller skips it when this returns False.
+    """
     sys.path.insert(0, str(repo))
+    if not (hermes_dir / "agent" / "context_compressor.py").is_file():
+        return False
+    sys.path.insert(0, str(hermes_dir))
+    try:
+        import hermes_bootstrap  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def _values(obj) -> list[str]:
@@ -226,7 +237,7 @@ def _snapshot(db_path: Path, out_dir: Path) -> Path:
 
 
 def run(args) -> int:
-    _setup(Path(args.repo), Path(args.hermes_dir))
+    have_hermes = _setup(Path(args.repo), Path(args.hermes_dir))
     import projector
 
     checker = Checker(projector)
@@ -274,7 +285,7 @@ def run(args) -> int:
 
     # 2. Reference integrity against the real summaries in state.db. Needs one; skipped
     # (with the rest still enforced) when running standalone, e.g. in CI.
-    if args.synthetic or not Path(args.state_db).is_file():
+    if args.synthetic or not have_hermes or not Path(args.state_db).is_file():
         base_report["mode"] = "standalone: reference integrity needs real summaries in a state.db"
         base_report["failures"] = checker.failures
         print(json.dumps(base_report, indent=1))
