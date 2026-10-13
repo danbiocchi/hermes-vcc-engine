@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+bench/accuracy*.json
+*.db
+corpus.json
+state-snapshot*
+golden.json
+.cache/

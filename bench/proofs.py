@@ -326,6 +326,9 @@ def run(args) -> int:
                     refs_ok += 1
     sdb.close()
     db.close()
+    # The snapshot is a complete copy of the user's conversation database. Do not leave it
+    # lying around; proofs.py recreates it on demand.
+    snap.unlink(missing_ok=True)
 
     report = dict(base_report)
     report["reference_integrity"] = {
