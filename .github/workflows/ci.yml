@@ -25,6 +25,8 @@ jobs:
       - run: python -m pytest -q -rs
         env:
           HERMES_AGENT_DIR: /nonexistent
+      # Faithfulness + negative control on generated transcripts; needs no private data.
+      - run: python bench/proofs.py --synthetic
 
   hygiene:
     runs-on: ubuntu-latest

@@ -231,8 +231,15 @@ def run(args) -> int:
 
     checker = Checker(projector)
 
-    # 1a. Faithfulness on the frozen corpus (fresh projections of every session).
-    corpus = json.loads(Path(args.corpus).read_text())
+    # 1a. Faithfulness on the corpus (fresh projections of every session).
+    if args.synthetic or not Path(args.corpus).is_file():
+        sys.path.insert(0, str(Path(args.repo) / "tests"))
+        import transcripts as t
+
+        corpus = [("synthetic-fix", t.fix_the_build())]
+        corpus += [(f"synthetic-{seed}", t.long_session(120, output_chars=1500, seed=seed)) for seed in range(4)]
+    else:
+        corpus = json.loads(Path(args.corpus).read_text())
     for sid, msgs in corpus:
         by_id = {m["_row_id"]: m for m in msgs if isinstance(m.get("_row_id"), int)}
         for budget in (6000, 23592):
@@ -240,7 +247,39 @@ def run(args) -> int:
             checker.check_log(summary, by_id, f"corpus:{sid[:8]}")
     corpus_lines, corpus_ok = checker.lines, checker.verified
 
-    # 1b + 2. Real summaries the engine wrote into state.db.
+    # 1b. Negative control: the checker must REJECT a planted fabrication, or a clean pass
+    # proves nothing. Splice an invented word into one verifiable log line per session.
+    planted = caught = 0
+    for sid, msgs in corpus:
+        by_id = {m["_row_id"]: m for m in msgs if isinstance(m.get("_row_id"), int)}
+        log = projector.split_sections(projector.project(msgs, budget_chars=23592, session_id=sid))[1]
+        for raw_line in log.get(projector.LOG_HEADING, "").splitlines():
+            if not (LINE_USER.match(raw_line) or LINE_CALL.match(raw_line) or LINE_RESULT.match(raw_line)):
+                continue
+            tampered = raw_line + " ZXQVWFABRICATED"  # an invented word in no message
+            probe = Checker(projector)
+            probe.check_log(f"{projector.LOG_HEADING}\n{tampered}", by_id, "control")
+            planted += 1
+            caught += int(probe.verified == 0)
+            break
+
+    base_report = {
+        "faithfulness_corpus": {"log_lines": corpus_lines, "verified": corpus_ok,
+                                "note": "each line checked to quote its cited message's stored text"},
+        "negative_control": {"sessions_with_planted_fabrication": planted, "rejected_by_checker": caught,
+                             "note": "an invented word spliced into a log line is rejected by the same check"},
+        "retention": _retention(projector, corpus, 23592),
+    }
+    base_ok = (corpus_ok == corpus_lines and planted > 0 and caught == planted)
+
+    # 2. Reference integrity against the real summaries in state.db. Needs one; skipped
+    # (with the rest still enforced) when running standalone, e.g. in CI.
+    if args.synthetic or not Path(args.state_db).is_file():
+        base_report["mode"] = "standalone: reference integrity needs real summaries in a state.db"
+        base_report["failures"] = checker.failures
+        print(json.dumps(base_report, indent=1))
+        return 0 if base_ok else 1
+
     snap = _snapshot(Path(args.state_db), Path(args.workdir))
     db = sqlite3.connect(snap)
     db.row_factory = sqlite3.Row
@@ -277,38 +316,15 @@ def run(args) -> int:
     sdb.close()
     db.close()
 
-    # Negative control: the checker must REJECT a planted fabrication, or a clean pass proves
-    # nothing. For every session, splice an invented word into the first verifiable log line
-    # and confirm the same check now fails it.
-    planted = caught = 0
-    for sid, msgs in corpus:
-        by_id = {m["_row_id"]: m for m in msgs if isinstance(m.get("_row_id"), int)}
-        log = projector.split_sections(projector.project(msgs, budget_chars=23592, session_id=sid))[1]
-        for raw_line in log.get(projector.LOG_HEADING, "").splitlines():
-            if not (LINE_USER.match(raw_line) or LINE_CALL.match(raw_line) or LINE_RESULT.match(raw_line)):
-                continue
-            tampered = raw_line + " ZXQVWFABRICATED"  # an invented word in no message
-            probe = Checker(projector)
-            probe.check_log(f"{projector.LOG_HEADING}\n{tampered}", by_id, "control")
-            planted += 1
-            caught += int(probe.verified == 0)
-            break
-
-    report = {
-        "faithfulness_corpus": {"log_lines": corpus_lines, "verified": corpus_ok,
-                                "note": "each line checked to quote its cited message's stored text"},
-        "negative_control": {"sessions_with_planted_fabrication": planted, "rejected_by_checker": caught,
-                             "note": "an invented word spliced into a log line is rejected by the same check"},
-        "retention": _retention(projector, corpus, 23592),
-        "reference_integrity": {"summaries_in_db": len(summaries), "references": refs_total,
-                                "resolved_to_original_message": refs_ok,
-                                "note": "every [#N] opened with Hermes's own session_search on a db snapshot"},
-        "failures": checker.failures,
-    }
+    report = dict(base_report)
+    report["reference_integrity"] = {
+        "summaries_in_db": len(summaries), "references": refs_total,
+        "resolved_to_original_message": refs_ok,
+        "note": "every [#N] opened with Hermes's own session_search on a db snapshot"}
+    report["failures"] = checker.failures
     print(json.dumps(report, indent=1))
     Path(args.workdir, "proofs.json").write_text(json.dumps(report, indent=1))
-    passed = (corpus_ok == corpus_lines and refs_ok == refs_total and planted > 0 and caught == planted)
-    return 0 if passed else 1
+    return 0 if (base_ok and refs_ok == refs_total) else 1
 
 
 def main() -> int:
@@ -320,6 +336,8 @@ def main() -> int:
     ap.add_argument("--repo", default=str(here))
     ap.add_argument("--corpus", default=str(cache / "corpus.json"))
     ap.add_argument("--workdir", default=str(cache / "proofs"))
+    ap.add_argument("--synthetic", action="store_true",
+                    help="use generated transcripts and skip the state.db checks (CI)")
     args = ap.parse_args()
     for name in ("state_db", "hermes_dir", "repo", "corpus", "workdir"):
         setattr(args, name, str(Path(getattr(args, name)).expanduser().resolve()))
