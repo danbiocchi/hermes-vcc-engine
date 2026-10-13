@@ -8,21 +8,72 @@ This engine swaps that one LLM call for a deterministic projection of the transc
 
 Idea and naming come from [VCC](https://github.com/lllyasviel/VCC) ([paper](https://arxiv.org/abs/2603.29678)) by Lvmin Zhang: compile the transcript into a compact view instead of rewriting it with a model. This is an independent implementation for Hermes, not a port of that code.
 
-## Numbers
+## Benchmarks
 
-Time for the whole summary step (projection, Hermes's own anchor/user sections, redaction) on real sessions from my `state.db`. Median of 7 runs, Ryzen 5 2600X, the Python 3.14 that ships with Hermes:
+Everything below is reproducible from this repo against your own `state.db`. Benchmark corpus:
+13 real sessions (3,717 messages, 4.0M chars) plus 8 seeded stress transcripts. Hardware:
+Ryzen 5 2600X, the Python 3.14 that ships with Hermes, Qwen3.8-27B IQ3_S on a GTX 1080 + 1070.
 
-| session | messages | tokens in | v0.1 | v0.2 |
-|---|---:|---:|---:|---:|
-| big refactor (full history) | 1,486 | ~695k | 325 ms | 149 ms |
-| typical tool-heavy | 254 | ~79k | 71 ms | 34 ms |
-| short | 93 | ~28k | 21 ms | 17 ms |
+### Speed
 
-For comparison, the stock compressor on the same box (Qwen3.8-27B IQ3_S on a GTX 1080 + 1070, llama.cpp) took 237 s, 365 s, 553 s and 781 s for its last four compactions, plus one I interrupted after 15 minutes. That was before I tuned llama.cpp properly; tuned, it's maybe 3-4x faster. Still minutes.
+Time for the whole summary step (projection, Hermes's own anchor/user sections, redaction),
+median of 7 runs, v0.1 and v0.2 run alternately on the same frozen inputs:
 
-v0.2 produces byte-for-byte the same summaries as v0.1. That's checked, not assumed: `bench/bench.py` hashes 126 outputs (13 real sessions plus 8 seeded stress transcripts, one- and two-step compactions, full `compress()` passes) and every hash matches what v0.1 produced on the same frozen inputs.
+| session | messages | chars in | v0.1 | v0.2 | |
+|---|---:|---:|---:|---:|---:|
+| big refactor (full history) | 1,486 | 1,960,994 | 325 ms | **149 ms** | 2.2x |
+| typical tool-heavy | 254 | 242,881 | 71 ms | **34 ms** | 2.1x |
+| medium | 93 | 88,429 | 21 ms | **17 ms** | 1.3x |
+| whole corpus | 3,717 | 4,025,949 | 840 ms | **523 ms** | −38% |
 
-What you still pay after any compaction is the model re-reading the shorter context (prompt processing), since the prompt cache can't survive the rewrite. The projection is budgeted small (6% of the window by default) to keep that short.
+Component breakdown on the big session: projector 157 ms → 67 ms (2.3x), Hermes's anchor index
+208 ms → 75 ms (2.8x). Iterative (two-step) compaction across the corpus: 1,061 ms → 744 ms.
+A full `compress()` moves 795 ms → 717 ms — only ~10%, because most of that call is Hermes's
+own code that this plugin does not touch.
+
+For scale: the stock LLM compressor on the same box took 237 s, 365 s, 553 s and 781 s for its
+last four compactions, plus one I interrupted after 15 minutes. Milliseconds versus minutes.
+
+### Byte-identity (v0.2 changed no output)
+
+`bench/bench.py` hashes 126 outputs — every session at two budgets, one- and two-step
+compactions, and full `compress()` passes. All 126 match what v0.1 produced on the same frozen
+inputs, so the speedup cannot have changed a single character of any summary.
+
+### Proofs that nothing is invented and nothing is lost
+
+`bench/proofs.py`, no GPU needed:
+
+| check | result | what it means |
+|---|---:|---|
+| Faithfulness | **722 / 722** log lines | every line's role, tool and exit code match the message it cites, and every word in its excerpt occurs verbatim in that message |
+| Negative control | **13 / 13** caught | an invented word spliced into a log line is rejected by that same check, so the pass above is not vacuous |
+| Reference integrity | **322 / 322** references | every `[#N]` in the real summaries in my `state.db`, opened with Hermes's own `session_search`, returns the original message |
+
+The faithfulness check is deliberately strict about fabrication: it is not "does this look
+plausible" but "is every alphanumeric run in this excerpt present in the cited message".
+
+### Retention (how much survives directly in the summary)
+
+Factory's [compression evals](https://factory.com/news/evaluating-compression) found the
+artifact trail — which files were touched — the weakest dimension of every compressor they
+measured, so it is reported here per compression ratio rather than as one average:
+
+| compression ratio | files modified | commands run | user requests |
+|---|---:|---:|---:|
+| up to 2.4x (11 sessions) | 9 / 9 | 29 / 30 | 26 / 26 |
+| 10x (1 session) | 2 / 2 | 32 / 42 | 6 / 6 |
+| 83x (1 session, worst case) | 16 / 20 | 57 / 88 | 23 / 30 |
+
+Errors from calls that actually failed: 2 / 2. At the ratios Hermes actually compacts at,
+retention is essentially total. The 83x row is an artificial worst case — a 1.96M-char history
+forced into one 24k-char summary; in practice Hermes compacts incrementally and merges forward.
+Beyond those caps the long tail is not deleted, it stays in `state.db` and is what
+`session_search` is for.
+
+What you still pay after any compaction is the model re-reading the shorter context (prompt
+processing), since the prompt cache cannot survive the rewrite. The projection is budgeted small
+(6% of the window by default) to keep that re-read short.
 
 ## Install
 
