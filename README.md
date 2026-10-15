@@ -1,10 +1,14 @@
 # hermes-vcc-engine
 
-**Context compaction for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that takes milliseconds instead of minutes, and doesn't lose anything.**
+**Based on the paper [*View-oriented Conversation Compiler for Agent Trace Analysis*](https://arxiv.org/abs/2603.29678) (VCC; Lvmin Zhang and Maneesh Agrawala, arXiv 2603.29678).**
 
-Hermes compacts a long conversation by asking an LLM to summarize the old turns. This plugin replaces that LLM call with a deterministic projection of the transcript: what you asked, what ran, what failed, what got fixed, which files changed. Every line points back to the message it came from, so the agent can open the original whenever it needs a detail.
+**Context compaction for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that takes milliseconds instead of minutes, with no measurable loss in what the model can recall.**
 
-![Benchmark: stock Hermes vs vcc 0.3](docs/benchmark.png)
+Hermes compacts a long conversation by asking an LLM to summarize the old turns. The VCC paper compiles agent logs into compact views with stable references back to the original lines, and reports that agents do somewhat better on AppWorld with them, using about half the tokens. This plugin applies that idea to Hermes. It replaces the summary LLM call with a deterministic projection of the transcript (what you asked, what ran, what failed, what got fixed, which files changed). Every line points back to the message it came from, so the agent can open the original whenever it needs a detail.
+
+<img src="docs/benchmark.png" width="100%" alt="vcc 0.3 vs stock Hermes: 9,000x faster compaction, same accuracy as never compacting">
+
+**In short:** on a local model, compaction goes from minutes to milliseconds, and afterwards the model answers as many questions about the earlier work as it does with the full, uncompacted transcript, and more than it does from the stock summary. It doesn't make the model better than its own ceiling, and on a fast frontier API the speed win matters much less.
 
 | | stock Hermes (LLM summary) | **vcc 0.3** |
 |---|---|---|
