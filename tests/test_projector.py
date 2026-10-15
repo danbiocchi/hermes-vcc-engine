@@ -17,7 +17,7 @@ def test_sections_and_refs_for_a_typical_fix():
 
     assert out.startswith(p.TASK_HEADING)
     assert "## Goal\nThe build in ~/proj is red" in out
-    assert "## Relevant Files\n- /home/u/proj/proj/core.py (read, patched)" in out
+    assert "- /home/u/proj/proj/core.py — read; modified (patched)" in out
     assert "- `cd ~/proj && pytest -q`" in out
     # the failure was retried successfully, so it is a fix, not a blocker
     assert p.BLOCKED_HEADING not in out
@@ -26,6 +26,57 @@ def test_sections_and_refs_for_a_typical_fix():
     ids = {m["_row_id"] for m in turns}
     assert set(p.iter_refs(out)) <= ids
     assert "session_search(session_id='s1', around_message_id=N)" in out
+
+
+
+def test_facts_are_stated_in_plain_words():
+    out = p.project(fix_the_build(), budget_chars=8000, session_id="s1")
+    # every run of a command keeps its outcome, in order
+    assert "- `cd ~/proj && pytest -q` — failed (exit 1), then succeeded (exit 0)" in out
+    # named errors are listed on their own, with where they first appeared
+    assert p.ERROR_NAMES_HEADING + "\nNamed errors that appeared in tool output:\n- ImportError (first at [#" in out
+    # the file list says what it covers, so a file missing from it can be answered "no"
+    assert "Every file read or changed with a file tool in this part of the session" in out
+
+
+def test_repeated_identical_outcomes_collapse():
+    turns = [user("run it")]
+    for i in range(3):
+        turns += terminal_turn(f"r{i}", "make test", "ok", exit_code=0)
+    out = p.project(turns, budget_chars=4000)
+    assert "- `make test` — succeeded (exit 0) (3 times)" in out
+
+
+def test_written_files_read_as_created_or_overwritten():
+    turns = [user("make a config"), assistant("", [call("w1", "write_file", path="/srv/app.ini", content="x=1")]),
+             result("w1", {"success": True}, "write_file")]
+    out = p.project(turns, budget_chars=4000)
+    assert "- /srv/app.ini — written (created or overwritten)" in out
+
+
+def test_merge_reads_both_the_current_and_the_v02_format():
+    first = p.project(fix_the_build(), budget_chars=8000, session_id="s1")
+    legacy = (first.replace(" — read; modified (patched)", " (read, patched)")
+              .replace("` — failed (exit 1), then succeeded (exit 0)", "`"))
+    for previous in (first, legacy):
+        merged = p.project([user("next step")], budget_chars=8000, session_id="s1", previous=previous)
+        assert "- /home/u/proj/proj/core.py — read; modified (patched)" in merged
+        assert "- `cd ~/proj && pytest -q` — " in merged
+    merged = p.project([user("next step")], budget_chars=8000, session_id="s1", previous=first)
+    assert "- `cd ~/proj && pytest -q` — failed (exit 1), then succeeded (exit 0)" in merged
+    assert "- ImportError (first at [#" in merged
+
+def test_error_name_scan_matches_the_single_regex():
+    # The scan is split in two for speed; it must find exactly what one combined regex finds.
+    reference = re.compile(
+        r"\b[A-Z][A-Za-z0-9]*(?:Error|Exception)\b"
+        r"|\bE(?:NOENT|ACCES|NOSPC|PERM|EXIST|ADDRINUSE|CONNREFUSED|TIMEDOUT|NOTDIR|ISDIR|BUSY)\b")
+    parts = ["ENOENT", "EPERM", "EACCES", "Error", "Exception", "ValueError", "KeyErrorX", "OSError",
+             "x", "_", "é", "Ä", "1", " ", ":", "(", "\n", "E", "Value", "my_", "EPERMError"]
+    rng = random.Random(7)
+    for _ in range(20000):
+        text = "".join(rng.choice(parts) for _ in range(rng.randint(0, 12)))
+        assert p._error_names(text) == list(dict.fromkeys(reference.findall(text)))[:8], text
 
 
 def test_reasoning_is_dropped():

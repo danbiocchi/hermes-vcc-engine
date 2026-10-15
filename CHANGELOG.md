@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+Summaries a small model can actually use. On 13 real compaction points and 164 machine-graded questions, the local 27B answers 105 correctly from a vcc 0.3 summary, the same as from the full transcript, against 89 from stock Hermes's LLM summary and 70 from vcc 0.2.
+
+- Files say what happened in plain words: `modified (patched)`, `written (created or overwritten)`, next to the tool's own verb.
+- Commands Run lists each command's outcome in order, e.g. `failed (exit 1), then succeeded (exit 0)`; repeats collapse to `(3 times)`.
+- New "Error Names Seen" section: named errors (`ImportError`, `ENOENT` ...) with the message where each first appeared.
+- A carried-over non-vcc summary may use at most 15% of the budget (was 35%).
+- The session log header explains the `→` / `←` notation.
+- Merges read both the 0.3 and the 0.2 format, so upgrading mid-session is safe.
+- `bench/headtohead.py`: stock Hermes vs vcc on real compaction points, with paraphrased questions and McNemar's exact test.
+- `bench/proofs.py`: reference integrity counts only the `[#N]` pointers vcc wrote, not ones quoted from pasted text.
+- Summary step costs 3% more than 0.2; still 1.6x faster than 0.1.
+
 ## 0.2.0
 
 Same output as 0.1.0, byte for byte, in a lot less time. The engine's summary step is 38% faster across the benchmark corpus and about 2x faster on big sessions.

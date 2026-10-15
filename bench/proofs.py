@@ -30,6 +30,9 @@ LINE_USER = re.compile(r"^\[#(\d+)\] (user|assistant): (.*)$")
 LINE_CALL = re.compile(r"^\[#(\d+)\] → (\S+?)(?:: `(.*)`)?$")
 LINE_RESULT = re.compile(r"^\[#(\d+)\] ← (\S+) (exit -?\d+|ok|ERROR exit -?\d+|ERROR)(?:: (.*))?$")
 REF = re.compile(r"\[#(\d+)\]")
+# Refs the projector itself writes start a log line or bullet. A [#N] anywhere else is quoted text
+# (for example a summary pasted into the chat) and points wherever its author meant.
+OWN_REF = re.compile(r"(?m)^(?:- )?\[#(\d+)\]")
 ALNUM_RUN = re.compile(r"[A-Za-z0-9]{2,}")
 
 
@@ -314,7 +317,7 @@ def run(args) -> int:
                 except ValueError:
                     pass
             by_id[r["id"]] = m
-        for ref in sorted(set(int(x) for x in REF.findall(row["content"]))):
+        for ref in sorted(set(int(x) for x in OWN_REF.findall(row["content"]))):
             refs_total += 1
             out = json.loads(session_search(db=sdb, session_id=row["session_id"], around_message_id=ref, window=0))
             found = [m for m in out.get("messages", []) if m.get("id") == ref]
