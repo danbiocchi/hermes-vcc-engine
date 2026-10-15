@@ -223,6 +223,10 @@ _ERROR_ANCHORED = (
 )
 _ASCII_CASE_FOLDS = ("İ", "ı", "ſ", "K")  # İ ı ſ K: the only ones, checked exhaustively
 _EXIT_RE = re.compile(r'"exit_code"\s*:\s*(-?\d+)')
+# Hermes prunes old terminal results to a one-line stub before the summary step sees them
+# (context_compressor._sum_terminal). The exit code survives only in the stub's own words.
+_TERMINAL_STUB_RE = re.compile(r"\[terminal\] ran `.*` -> exit (-?\d+), \d+ lines output", re.DOTALL)
+_TERMINAL_STUB_MAX = 400  # the stub's command is capped at 80 chars
 _JSON_PARSE_MAX = 256 * 1024
 
 
@@ -375,8 +379,8 @@ def _result_from(text: str, limits: Limits) -> _Result:
 
     # Plain text, or JSON too large to parse: look at a bounded sample.
     exit_code = None
-    tail = text[-_SCAN_TAIL:]
-    match = _EXIT_RE.search(tail)
+    stub = _TERMINAL_STUB_RE.fullmatch(text.strip()) if len(text) <= _TERMINAL_STUB_MAX else None
+    match = stub or _EXIT_RE.search(text[-_SCAN_TAIL:])
     if match:
         exit_code = int(match.group(1))
     sample = _scan(text)

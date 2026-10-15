@@ -30,6 +30,7 @@ LINE_USER = re.compile(r"^\[#(\d+)\] (user|assistant): (.*)$")
 LINE_CALL = re.compile(r"^\[#(\d+)\] → (\S+?)(?:: `(.*)`)?$")
 LINE_RESULT = re.compile(r"^\[#(\d+)\] ← (\S+) (exit -?\d+|ok|ERROR exit -?\d+|ERROR)(?:: (.*))?$")
 REF = re.compile(r"\[#(\d+)\]")
+TERMINAL_STUB = re.compile(r"\[terminal\] ran `.*` -> exit (-?\d+), \d+ lines output", re.DOTALL)
 # Refs the projector itself writes start a log line or bullet. A [#N] anywhere else is quoted text
 # (for example a summary pasted into the chat) and points wherever its author meant.
 OWN_REF = re.compile(r"(?m)^(?:- )?\[#(\d+)\]")
@@ -158,6 +159,10 @@ class Checker:
             if code and isinstance(data, dict) and isinstance(data.get("exit_code"), int):
                 if int(code.group(0)) != data["exit_code"]:
                     return "result", False
+            # Hermes's pruned terminal stub carries the exit code in words; the status must agree.
+            stub = TERMINAL_STUB.fullmatch(raw.strip()) if len(raw) <= 400 else None
+            if stub and (int(code.group(0)) if code else 0) != int(stub.group(1)):
+                return "result", False
             return "result", m.group(4) is None or self.fragments_in(m.group(4), self.all_text(msg))
         return "unparsed", False
 

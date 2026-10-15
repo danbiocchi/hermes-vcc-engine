@@ -66,6 +66,22 @@ def test_merge_reads_both_the_current_and_the_v02_format():
     assert "- `cd ~/proj && pytest -q` — failed (exit 1), then succeeded (exit 0)" in merged
     assert "- ImportError (first at [#" in merged
 
+def test_hermes_pruned_terminal_stub_keeps_its_exit_code():
+    # Hermes replaces old terminal output with a one-line stub before the summary step runs;
+    # a failure there must not be reported as a success.
+    turns = [
+        user("Run the tests."),
+        assistant("", [call("t1", "terminal", command="pytest -q")]),
+        result("t1", "[terminal] ran `pytest -q` -> exit 1, 40 lines output", "terminal"),
+        assistant("", [call("t2", "terminal", command="ls")]),
+        result("t2", "[terminal] ran `ls` -> exit 0, 3 lines output", "terminal"),
+    ]
+    out = p.project(turns, budget_chars=8000, session_id="s1")
+    assert "- `pytest -q` — failed (exit 1)" in out
+    assert "- `ls` — succeeded (exit 0)" in out
+    assert "## Blocked" in out
+
+
 def test_error_name_scan_matches_the_single_regex():
     # The scan is split in two for speed; it must find exactly what one combined regex finds.
     reference = re.compile(
