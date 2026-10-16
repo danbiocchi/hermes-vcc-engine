@@ -197,7 +197,17 @@ Measured from the author's Hermes logs (`agent.log`, October 2026). Stock ran Oc
 | next model call after compaction, median (re-read of the prompt plus the reply) | 208 s | 216 s |
 | total pause, median | ≈ 443 s | ≈ 216 s |
 
-So in real use the pause after a compaction was about 2x shorter. The controlled re-measurement of the re-read cost was part of a benchmark run that was stopped before it got there (section 7).
+So in real use the pause after a compaction was about 2x shorter, counting the whole next reply.
+
+Measured under control on the 23 frozen windows of the 0.4.0 report (`bench/certainty.py`, llama.cpp's own `prompt_ms` for the first request after compaction, prompt cache cold for the new context):
+
+| | stock | vcc 0.4.0 |
+|---|---:|---:|
+| compaction step, median | 488 s | 0.055 s |
+| reading the compacted prompt, median | 72 s (15.3k new tokens) | 70 s (14.6k new tokens) |
+| compaction plus reading the prompt, median | 539 s (347–1,409 s) | 70 s (22–138 s) |
+
+The wait before the model can start its next reply is a median of 9.3x shorter per window (2.9x to 28x). Generating the reply itself is not included; it costs the same under either engine, which is why the real-use figure that includes it is about 2x.
 
 ---
 
@@ -352,7 +362,9 @@ These sections come from Hermes, and the stock path adds them too. (The anchor i
 3. `ask`: each question against each context at temperature 0, in the generated wording and in a fixed paraphrase (`paraphrase`).
 4. `report`: totals, per-type scores, and McNemar's exact test on paired answers.
 
-#### Round 1 results (13 windows, 4 sessions)
+#### Earlier: round 1 (vcc 0.3, 13 windows, 4 sessions)
+
+Kept for the record; superseded by the 0.4.0 report below.
 
 | context given to the model | correct | of 164 |
 |---|---:|---:|
@@ -372,25 +384,48 @@ The 164 answers exclude 62 control questions about invented files and errors, wh
 
 Per session, the vcc-vs-stock difference was +23, −4, 0 and −3, so one session drives it. The 0.2 → 0.3 changes were designed after looking at 0.2's failures on these windows, so that row is in-sample.
 
-#### Round 2 (stopped before any answers)
+### Current report: hermes-vcc-engine 0.4.0 (`bench/certainty.py`)
 
-A larger run was built to close threats 1–4 below. It used 69 windows cut at 32k, 64k and 98k context sizes, and 1,025 questions, half of them from a generator written without reading the projector, including real "no" questions such as files that were only read. It asked inside the real post-compaction message list and used an untruncated baseline. It was stopped after the stock summaries for 23 windows; no answers were collected. What it did establish:
+The harness was built to close threats 1–4 below:
+- **Questions:** two sets per window. One is `bench/accuracy.py`'s generator. The other is `bench/questions.py`, written without reading the projector, which includes real "no" questions such as files that were only read. Both sets are asked in a second wording fixed before any results.
+- **Context:** each question is asked as a user turn appended to the actual message list `compress()` returns, after Hermes's own repair and sanitize passes.
+- **Baseline:** "Full window" is the untruncated message list of the window, never compacted.
+- **Statistics:** sign-flip permutation and bootstrap over windows.
 
-- v0.1 and v0.2 summaries are byte-identical on all 69 windows.
-- Stock `compress()` took a median of 488 s on those 23 windows (279–1,261 s), and 2 of the 23 exceeded Hermes's 900 s ceiling. vcc took a median of 0.055 s on the same windows.
-- The pruned-stub bug (section 6), fixed in 0.4.0.
-- On 2 windows with no user-authored messages, Hermes's provenance check rejected the vcc summary (`_validate_summary_user_provenance` runs after `_ground_historical_task_snapshot`, which can insert a user turn the check does not count). The stock path runs the same two steps in the same order.
+The run used 23 windows from 4 sessions (13 cut at a 98k context, 10 at 64k), 416 questions and 832 answers per context, on Qwen3.8-27B at temperature 0 with thinking off. The other context engine in the catalog that builds deterministic summaries ("other hermes vcc plugin", version 0.1.0 at its pinned commit) was run through the same harness after its source was reviewed.
+
+| context | correct | of 832 | independent questions only (of 494) |
+|---|---:|---:|---:|
+| hermes-vcc-engine 0.4.0 | 757 | 91.0% | 88.3% |
+| full window, never compacted | 725 | 87.1% | 83.8% |
+| stock Hermes | 634 | 76.2% | 70.4% |
+| other hermes vcc plugin | 620 | 74.5% | 67.4% |
+
+| 0.4.0 vs | only 0.4.0 right | only the other right | difference | 95% CI | window-level p |
+|---|---:|---:|---:|---|---:|
+| other hermes vcc plugin | 151 | 14 | +16.5 pts | +11.8 to +21.6 | < 0.001 |
+| stock Hermes | 134 | 11 | +14.8 pts | +10.7 to +19.1 | < 0.001 |
+| full window | 62 | 30 | +3.8 pts | −0.1 to +8.1 | 0.10 |
+
+- **New windows:** the 10 windows cut at 64k were never inspected while the summary format was developed, so they are the cleanest test. On them the scores were 0.4.0 90.4%, full window 90.2%, stock 81.1% (p = 0.008 vs 0.4.0) and the other plugin 80.1% (p = 0.011).
+- **Command outcomes:** the largest differences are on questions about whether a command or the last command succeeded (107 / 108 and 24 / 26 for 0.4.0 against 55 / 108 and 10 / 26 for the other plugin, which doesn't record tool results), and on error names (18 / 18 against 0 / 18).
+- **Close calls:** files that were only read, and words from the user's request, are close across all four.
+- **Tool counts:** on "how many times was tool X called" every context did poorly, and the full window did best (25 / 44 against 15 / 44 for 0.4.0).
+
+Also established by this harness:
+- v0.1 and v0.2 summaries are byte-identical on all 69 frozen windows.
+- On 2 of 71 windows with no user-authored messages, Hermes's provenance check rejected the vcc summary. `_validate_summary_user_provenance` runs after `_ground_historical_task_snapshot`, which can insert a user turn the check doesn't count. The stock path runs the same two steps in the same order. Those windows are excluded from every condition.
 
 ### Threats to validity a reviewer should check
 
-1. **"FULL" is not the raw transcript.** `headtohead.py:context("FULL")` renders `e["turns"]`: the turns *after* Hermes's Phase-1 pruning, with tool results cut to 1,500 chars and call arguments to 600 (`accuracy.py:render_full`). Large old tool outputs are already one-line stubs in this baseline. "vcc matches FULL" therefore means "vcc matches the pruned middle region", not "vcc matches never compacting". This probably explains why FULL scores only 2 / 20 on error questions in the README.
-2. **The questions ask about what vcc extracts.** Every probe type (modified files from `patch`/`write_file`/`edit_file`, terminal exit codes, `*Error`/`*Exception` tokens in tool output, the first user request) has a dedicated vcc section, and the v0.3 changes were made after looking at v0.2's results on this question set. The benchmark measures retention of these structured facts. It does not test reasoning, decisions, file contents, or whether the agent completes its next task. A stock summary may keep information these questions never ask about.
-3. **Error probes and "Error Names Seen" use nearly the same definition.** Both match error-name tokens anywhere in tool output, failed call or not (`accuracy.py:ERROR_TOKEN`, `projector.py:_error_names`). vcc's lead on error questions (13 vs 2 of 20 in the README) partly reflects that match.
-4. **Pruned failures are invisible to the benchmark.** Command probes are generated only for tool results that are still JSON with `exit_code`. Old large outputs, which are pruned, generate no command probe, and that is exactly where vcc misreports outcomes (section 6).
-5. **Small sample, one model, one user.** 13 compaction points from four of one person's sessions, one model (Qwen 27B, IQ3_S), temperature 0, and 164 graded answers. Grouped by window, the 95% interval on vcc vs the uncompacted region is about ±13 points, and one session accounts for most of the vcc-vs-stock difference. Paraphrased and generated wordings of the same question are not independent. Single-shot answers with `max_tokens=48` and thinking disabled may favour terse, structured contexts.
+1. **"FULL" is not the raw transcript.** `headtohead.py:context("FULL")` renders `e["turns"]`: the turns *after* Hermes's Phase-1 pruning, with tool results cut to 1,500 chars and call arguments to 600 (`accuracy.py:render_full`). Large old tool outputs are already one-line stubs in this baseline. "vcc matches FULL" therefore means "vcc matches the pruned middle region", not "vcc matches never compacting". This applies to round 1 only; the 0.4.0 report uses the untruncated message list.
+2. **The questions ask about what vcc extracts.** Every probe type (modified files from `patch`/`write_file`/`edit_file`, terminal exit codes, `*Error`/`*Exception` tokens in tool output, the first user request) has a dedicated vcc section, and the v0.3 changes were made after looking at v0.2's results on this question set. The benchmark measures retention of these structured facts. It does not test reasoning, decisions, file contents, or whether the agent completes its next task. A stock summary may keep information these questions never ask about. The 0.4.0 report adds an independent generator, and the ranking holds on it, but both sets are still factual questions.
+3. **Error probes and "Error Names Seen" use nearly the same definition.** Both match error-name tokens anywhere in tool output, failed call or not (`accuracy.py:ERROR_TOKEN`, `projector.py:_error_names`). vcc's lead on error questions partly reflects that match. The independent generator also asks about error names that literally appear in tool results, so the same caution applies to its error family (18 questions).
+4. **Pruned failures are invisible to the benchmark.** Command probes are generated only for tool results that are still JSON with `exit_code`. Old large outputs, which are pruned, generate no command probe, and that is exactly where vcc 0.1–0.3 misreported outcomes (section 6). The independent generator reads Hermes's stubs, so the 0.4.0 report covers them.
+5. **Small sample, one model, one user.** The 0.4.0 report uses 23 compaction windows from four of one person's sessions, one model (Qwen 27B, IQ3_S) and temperature 0. Round 1 used 13 windows, and there one session accounted for most of the vcc-vs-stock difference. Paraphrased and generated wordings of the same question are not independent. Single-shot answers with `max_tokens=48` and thinking disabled may favour terse, structured contexts.
 6. **No recovery in the main comparison.** The `[#N]` lookup is not exercised in the head-to-head. (`accuracy.py` has a `VCC+RECALL` condition with one lookup round, but the head-to-head doesn't use it.)
 7. **Faithfulness is a bag-of-words check on the projector's direct output.** `Checker.fragments_in` requires each alphanumeric run (≥2 chars) to occur *somewhere* in the cited message, not as a contiguous span in order. Single characters are not checked. Only session-log lines are checked: Commands Run outcomes, Errors & Fixes pairings and Relevant Files verbs are not. The proof runs `projector.project` on unpruned stored messages, not on the pruned turns `compress()` actually passes in. The negative control (one appended nonsense word) catches only the crudest fabrication.
-8. **Timing comparisons.** Stock is a single run per point; vcc is a median of five. Stock time includes whatever else was running on the GPU host. None of the published numbers include the post-compaction re-prefill (section 4).
+8. **Timing comparisons.** Stock is a single run per point; vcc is a median of five. Stock time includes whatever else was running on the GPU host. The re-read of the compacted prompt is now measured (section 4); generating the next reply is not.
 9. **Hermes version drift.** Results depend on Hermes internals (pruning stubs, budgets, the lean sections). Record the Hermes commit with any result; this document was written against `7cc3fb8cb5`.
 
 ### To reproduce
@@ -407,6 +442,11 @@ $PY -I bench/headtohead.py stock                   # needs your model server; sl
 $PY -I bench/headtohead.py variant vcc
 $PY -I bench/headtohead.py ask FULL STOCK vcc
 $PY -I bench/headtohead.py report
+$PY -I bench/certainty.py freeze 98304 65536      # the 0.4.0 report's harness
+$PY -I bench/certainty.py compact STOCK
+$PY -I bench/certainty.py compact v0.4
+$PY -I bench/certainty.py ask v0.4 STOCK FULL
+$PY -I bench/certainty.py report
 ```
 
 The scripts print only counts, scores, ids and hashes. Frozen inputs and answers are written under `~/.cache/hermes-vcc-engine/` with mode 0600, never to the repository.

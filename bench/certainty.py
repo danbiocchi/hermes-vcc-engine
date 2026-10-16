@@ -59,12 +59,24 @@ def model_id():
     return json.load(urllib.request.urlopen(BASE_URL + "/models"))["data"][0]["id"]
 
 
+def _other_engine_class():
+    """VCC_OTHER=<dir containing a plugin package> benchmarks another engine with the same harness."""
+    import importlib
+    other = Path(os.environ["VCC_OTHER"]).resolve()
+    sys.path.insert(0, str(other.parent))
+    return importlib.import_module(other.name).VccEngine
+
+
 def make_engine(sid, ctx, stock, model=""):
-    eng = engine.VccEngine(config={"context": {"vcc": {"fallback_to_llm": False}}}, config_context_length=ctx)
+    if os.environ.get("VCC_OTHER") and not stock:
+        eng = _other_engine_class()(config_context_length=ctx)
+    else:
+        eng = engine.VccEngine(config={"context": {"vcc": {"fallback_to_llm": False}}}, config_context_length=ctx)
     eng.update_model(model=model or "bench/local", context_length=ctx, base_url=BASE_URL, api_key="ollama",
                      provider="custom")
     eng._session_id = sid
-    eng._vcc_passthrough = stock
+    if hasattr(eng, "_vcc_passthrough"):
+        eng._vcc_passthrough = stock
     cap = {}
     inner = eng._generate_summary
 
@@ -177,7 +189,7 @@ def compact(name):
             "compress_s": sorted(runs)[len(runs) // 2], "summary_s": cap.get("summary_s"),
             "tokens_after": est_msgs(after) if after else None, "summary_tokens": est(s), "error": err,
             "same_turns": len(cap.get("turns") or []) == e["n_turns"],
-            "fallbacks": 0 if stock else eng._vcc_fallbacks}
+            "fallbacks": 0 if stock else getattr(eng, "_vcc_fallbacks", 0)}
         save("compacted.json", store)
         print(f"{e['id']}: {name} {done['events'][e['id']]['compress_s']:8.3f}s "
               f"tokens_after {done['events'][e['id']]['tokens_after']} same_turns "
@@ -247,6 +259,9 @@ def prefill(conds):
 
 def ask(conds):
     events, comp, answers, model = load("events.json"), load("compacted.json", {}), load("answers.json", {}), model_id()
+    if os.environ.get("VCC_EVENTS_WITH"):  # only windows that condition has a compaction for
+        have = comp.get(os.environ["VCC_EVENTS_WITH"], {}).get("events", {})
+        events = [e for e in events if e["id"] in have]
     for e in events:
         for cond in conds:
             ctx = context_for(cond, e, comp)

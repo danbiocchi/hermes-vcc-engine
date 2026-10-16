@@ -13,49 +13,70 @@ It is an independent, Hermes-specific implementation inspired by the view-orient
 
 ## Results at a glance
 
-All measurements are local: one user's sessions, Qwen3.8-27B (IQ3_S, llama.cpp) on a GTX 1080 + GTX 1070, Hermes `0.21.7+158` (`7cc3fb8`). They show what happens on this workload, not that vcc beats every model or every compaction method. Details and caveats are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+Current report: **hermes-vcc-engine 0.4.0**. All measurements are local: one user's sessions, Qwen3.8-27B (IQ3_S, llama.cpp) on a GTX 1080 + GTX 1070, Hermes `0.21.7+158` (`7cc3fb8`). They show what happens on this workload, not that vcc beats every model or every compaction method. Method and caveats are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
-**Latency**
+### Recall: can the model answer questions about the compacted work?
 
-| What was measured | stock Hermes | vcc | What it shows |
+23 real compaction windows from 4 sessions (13 cut at a 98k context, 10 at 64k), 416 machine-graded questions, each asked in two wordings: 832 answers per context. The model gets the actual message list Hermes sends after compaction, followed by the question.
+
+| Context the model was given | Correct | |
+|---|---:|---:|
+| **hermes-vcc-engine 0.4.0** | **757 / 832** | **91.0%** |
+| Full window, never compacted | 725 / 832 | 87.1% |
+| Stock Hermes (LLM summary) | 634 / 832 | 76.2% |
+| Other hermes vcc plugin¹ | 620 / 832 | 74.5% |
+
+¹ The other VCC-based context engine in the Hermes plugin catalog, version 0.1.0 at its pinned commit.
+
+Paired comparisons. Each answer is compared with the same question under the other context. The p-value is a sign-flip permutation test over windows and the interval is a bootstrap over windows, because answers within one window aren't independent.
+
+| 0.4.0 vs | Only 0.4.0 right | Only the other right | Difference | 95% CI | p |
+|---|---:|---:|---:|---|---:|
+| Other hermes vcc plugin | 151 | 14 | +16.5 pts | +11.8 to +21.6 | < 0.001 |
+| Stock Hermes | 134 | 11 | +14.8 pts | +10.7 to +19.1 | < 0.001 |
+| Full window | 62 | 30 | +3.8 pts | −0.1 to +8.1 | 0.10 |
+
+- **Independent questions:** the order holds on the 247 questions from `bench/questions.py`, which was written without reading the projector. 0.4.0 scored 88.3%, the full window 83.8%, stock 70.4% and the other plugin 67.4%.
+- **New windows:** on the 10 windows cut at 64k, which were never inspected while developing the summary format, the scores were 0.4.0 90.4%, full window 90.2%, stock 81.1% (p = 0.008) and the other plugin 80.1% (p = 0.011).
+- **UNKNOWN answers:** 0.4.0 23, full window 27, stock 71, other plugin 94.
+
+By question type (independent questions only, both wordings):
+
+| Question | 0.4.0 | Full window | Stock | Other plugin |
+|---|---:|---:|---:|---:|
+| Did command X succeed? | **107 / 108** | 100 / 108 | 71 / 108 | 55 / 108 |
+| Did the last command succeed? | **24 / 26** | 21 / 26 | 18 / 26 | 10 / 26 |
+| Was command X run? | **41 / 46** | 33 / 46 | 25 / 46 | 29 / 46 |
+| Was error X raised? | **18 / 18** | 1 / 18 | 5 / 18 | 0 / 18 |
+| Was file X changed? | 86 / 88 | 86 / 88 | 74 / 88 | 84 / 88 |
+| Was file X changed? (it was only read) | 55 / 62 | 55 / 62 | 54 / 62 | 55 / 62 |
+| Which word was in the user's request? | 90 / 102 | 93 / 102 | 88 / 102 | 83 / 102 |
+| How many times was tool X called? | 15 / 44 | 25 / 44 | 13 / 44 | 17 / 44 |
+
+**What this doesn't show:**
+- **Coverage of the data:** every window comes from one user's four sessions, and only one model answered.
+- **Coverage of the questions:** they are factual and machine-graded. They don't test whether the agent completes its next task, and they don't ask about decisions, rationale or user preferences, which an LLM summary is written to capture.
+- **Ahead of the full window:** 0.4.0's lead there isn't significant. It's plausible that a short structured summary is easier to search than a 75k-token transcript.
+
+### Latency
+
+| What was measured | Stock Hermes | vcc | What it shows |
 |---|---:|---:|---|
-| Compaction step, real use (Hermes logs, Oct 2026) | median 195 s, max 781 s, n = 39; 2 more aborted at the 900 s ceiling | median 0.3 s, max 2.3 s, n = 12 | The summary step stops being a multi-minute stall. |
-| Total pause in real use: compaction plus the next model call | median ≈ 443 s | median ≈ 216 s | About **2x shorter**, not thousands of times. The next request re-reads the new prompt under either engine. |
-| Compaction step on frozen benchmark windows (~56–75k tokens) | median 488 s (279–1,261 s), n = 23 | median 0.055 s | The step alone is roughly 9,000x faster; 2 of 23 stock runs exceeded the 900 s ceiling. |
+| Compaction step on the 23 frozen windows (~56–75k tokens) | median 488 s (279–1,261 s) | median 0.055 s | The summary step alone is roughly 9,000x faster. 2 of 23 stock runs exceeded Hermes's 900 s ceiling. |
+| Compaction plus the model reading the new prompt, same windows | median 539 s (347–1,409 s) | median 70 s (22–138 s) | The wait before the model can start its next reply is about **9x shorter** (2.9x to 28x per window). Reading the compacted prompt costs about the same under either engine (15.3k vs 14.6k tokens). |
+| Total pause in real use: compaction plus the whole next model call (Hermes logs) | median ≈ 443 s (n = 39) | median ≈ 216 s (n = 12) | About **2x shorter**, because the next call also generates a full reply, often with reasoning, under either engine. |
 
-The real-use rows compare different sessions and context sizes (stock ran at a 64k window, vcc at 98k), so treat them as indicative, not controlled.
+The frozen-window rows are 0.4.0. The real-use row is from the author's Hermes logs while 0.1 and 0.2 were installed, compares different sessions and context sizes (stock ran at a 64k window, vcc at 98k), and is indicative only. The summary step's speed hasn't changed meaningfully since 0.2. The other hermes vcc plugin's compaction step took a median of 0.031 s on the same windows.
 
-**Recall: can the model answer questions about the compacted work?** 13 compaction points from 4 sessions, 82 machine-graded questions, each asked in two wordings (164 answers):
-
-| Context given to the model | Correct |
-|---|---:|
-| the compacted region, rendered without compaction (truncated, see below) | 105 / 164 |
-| **vcc 0.3** summary | **105 / 164** |
-| stock Hermes summary | 89 / 164 |
-| vcc 0.2 summary | 70 / 164 |
-
-- **vcc 0.3 vs vcc 0.2:** +35 answers (window-level permutation test p = 0.004). But 0.3's format was tuned on these same windows, so this is an in-sample gain.
-- **vcc 0.3 vs stock:** +16 answers, which is **not statistically significant** once answers are grouped by window (p = 0.21; 95% CI −3 to +23 points). Most of the difference comes from one of the four sessions.
-- **vcc 0.3 vs the uncompacted region:** no measurable difference (19 to 19; 95% CI −13 to +13 points).
-- **Caveats:** the questions are generated by rules that look for the same kinds of facts vcc extracts. The "uncompacted" baseline cut tool results to 1,500 characters. There were no hard "no" questions, only 62 obvious controls that every context answered UNKNOWN. A larger re-run, with independently written questions and an untruncated baseline, was stopped before any answers were collected.
-
-**Integrity: does the summary misquote its sources?**
+### Integrity: does the summary misquote its sources?
 
 | Check | Result | What it establishes |
 |---|---:|---|
-| Every word in every session-log excerpt appears in the message the line cites | 937 / 937 lines | Log lines quote their source, they don't invent words. This is a bag-of-words check. It says nothing about completeness, and it doesn't check the structured sections. |
+| Every word in every session-log excerpt appears in the message the line cites | 937 / 937 lines | Log lines quote their source. This is a bag-of-words check: it says nothing about completeness, and it doesn't check the structured sections. |
 | Same check with an invented word planted in a line | 17 / 17 caught | The check can fail. |
 | `[#N]` references in real stored summaries, opened with Hermes's `session_search` | 436 / 436 resolve to the cited message | References point at the right original. |
+| Commands Run entries checked against the raw tool results (69 windows, ~490 commands) | 43 / 43 failures shown as failed, 0 final outcomes stated wrong | The structured sections report outcomes correctly, including results Hermes had already shortened. Version 0.3 got 13 / 43 and 20 wrong. |
 | Model calls during a normal vcc compaction | 0 | Tests replace the LLM client with one that fails the test if called. |
-
-**Command outcomes, checked against the raw tool results** on 69 real compaction windows (about 490 checkable commands):
-
-| | 0.3 | 0.4 |
-|---|---:|---:|
-| Commands that failed at least once and are shown as failed | 13 of 43 | **43 of 43** |
-| Commands whose final outcome is stated wrong | 20 | **0** |
-
-Before the summary step, Hermes shortens old terminal results to a stub such as ``[terminal] ran `pytest -q` -> exit 1, 40 lines output``. Up to 0.3, vcc didn't read the exit code from that stub and reported the failure as a success. 0.4 reads it. A run with no exit code at all now reads `ran (no exit code)` instead of `succeeded`. The recall numbers above were measured on 0.3; 0.4 changes only these outcome labels and hasn't been re-measured with the model.
 
 ## The problem
 
@@ -212,7 +233,7 @@ The benchmark scripts in `bench/` are separate from the plugin and are not loade
   - Anything dropped is still in `state.db`, but only an omission note says so.
 - **Recall depends on the agent.** The `[#N]` references help only if the agent calls `session_search`.
 - **References need database ids.** Messages Hermes hasn't saved yet get positional `[tN]` labels, which `session_search` can't open.
-- **The prompt cache still resets.** Every compaction rewrites the prompt, the same as stock, so the next request re-reads it. That is why the end-to-end pause shrinks by about 2x, not by the speed-up of the summary step.
+- **The prompt cache still resets.** Every compaction rewrites the prompt, the same as stock, so the next request re-reads it. That's why the wait before the next reply shrinks by about 9x on the benchmark windows and about 2x in real use (where the reply itself is counted), not by the 9,000x of the summary step.
 - **Hermes's pruning hides detail first.** Large old tool results reach vcc as Hermes's one-line stubs. The command and exit code survive; the output text and any error names in it don't.
 - **Speed-ups depend on hardware and model.** On a fast frontier API the stock summary takes seconds, and a strong model's prose captures decisions vcc leaves out.
 - **`plugins.isolation: host` is untested.** The in-process default is what it's built and tested against.
@@ -240,7 +261,17 @@ $PY -I bench/headtohead.py ask FULL STOCK vcc     # questions under each context
 $PY -I bench/headtohead.py report                 # scores and paired tests
 ```
 
-`bench/certainty.py` is a stricter version of the head-to-head. It uses independently generated questions (`bench/questions.py`), asks inside the real post-compaction message list against an untruncated baseline, and reports window-level statistics. A full run takes about a day on the hardware above and hasn't been completed yet.
+The 0.4.0 report above comes from `bench/certainty.py`. It uses the generated questions plus independent ones from `bench/questions.py`, asks inside the real post-compaction message list against an untruncated baseline, and reports window-level statistics:
+
+```bash
+$PY -I bench/certainty.py freeze 98304 65536      # cut sessions at these context sizes, generate questions
+$PY -I bench/certainty.py compact STOCK           # stock summaries on your model (slow)
+$PY -I bench/certainty.py compact v0.4            # this checkout; VCC_REPO=<checkout> for another version
+$PY -I bench/certainty.py ask v0.4 STOCK FULL     # questions under each context
+$PY -I bench/certainty.py report
+```
+
+`VCC_OTHER=<path to another engine package>` benchmarks a different context engine with the same harness.
 
 Your sessions never leave your machine. Frozen inputs, summaries and answers stay in `~/.cache/hermes-vcc-engine/` at mode 0600, and the scripts print no transcript text. The method, the threats to validity and how to read each number are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
