@@ -442,6 +442,8 @@ def _add_file(files: dict[str, list[str]], path: str, verb: str) -> None:
 
 def _outcome(result: _Result) -> str:
     status = result.status.removeprefix("ERROR").strip()
+    if result.ok and status == "ok":
+        return "ran (no exit code)"  # nothing says it succeeded, only that nothing said it failed
     word = "succeeded" if result.ok else "failed"
     return f"{word} ({status})" if status and status != "ok" else word
 

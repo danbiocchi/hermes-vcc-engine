@@ -1,5 +1,5 @@
 name: hermes-vcc-engine
-version: 0.3.0
+version: 0.4.0
 description: "Instant context compaction: replaces the summary LLM call with a deterministic, lossless-by-reference projection of the transcript."
 author: danbiocchi
 license: Apache-2.0

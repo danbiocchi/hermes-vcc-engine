@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+Command outcomes are now right when Hermes has already shortened a result.
+
+- Before the summary step, Hermes replaces old terminal output with a one-line stub (``[terminal] ran `cmd` -> exit 1, 40 lines output``). 0.1 to 0.3 didn't read the exit code from it, so a failed command was treated as a success, and 0.3 listed it as `succeeded`. On 69 real compaction windows, 0.3 showed 13 of 43 failing commands as failed and stated the wrong final outcome for 20 commands. 0.4 shows all 43 and gets every final outcome right.
+- A run whose result has no exit code at all reads `ran (no exit code)` instead of `succeeded`.
+- `bench/proofs.py`: a log line's status must match a stub's exit code, and reference integrity counts only the `[#N]` pointers vcc wrote, not ones quoted from pasted text.
+- `bench/questions.py`: a question generator written without reading the projector, including real "no" questions (files that were only read, commands that failed).
+- `bench/certainty.py`: a head-to-head that asks inside the real post-compaction message list, with an untruncated baseline, window-level statistics and the cost of re-reading the compacted prompt.
+- Engine tests pass against the tagged Hermes 0.21.7 release.
+
 ## 0.3.0
 
 Summaries a small model can actually use. On 13 real compaction points and 164 machine-graded questions, the local 27B answers 105 correctly from a vcc 0.3 summary, the same as from the full transcript, against 89 from stock Hermes's LLM summary and 70 from vcc 0.2.

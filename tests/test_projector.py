@@ -82,6 +82,16 @@ def test_hermes_pruned_terminal_stub_keeps_its_exit_code():
     assert "## Blocked" in out
 
 
+def test_a_run_without_an_exit_code_is_not_called_a_success():
+    turns = [
+        user("Start the server."),
+        assistant("", [call("t1", "terminal", command="./serve")]),
+        result("t1", "[terminal] ran `./serve` -> exit ?, 2 lines output", "terminal"),
+    ]
+    out = p.project(turns, budget_chars=8000, session_id="s1")
+    assert "- `./serve` — ran (no exit code)" in out
+
+
 def test_error_name_scan_matches_the_single_regex():
     # The scan is split in two for speed; it must find exactly what one combined regex finds.
     reference = re.compile(

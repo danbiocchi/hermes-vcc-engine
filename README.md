@@ -11,8 +11,6 @@ A context engine for [Hermes Agent](https://github.com/NousResearch/hermes-agent
 
 It is an independent, Hermes-specific implementation inspired by the view-oriented approach of [*View-oriented Conversation Compiler for Agent Trace Analysis*](https://arxiv.org/abs/2603.29678) (VCC; Lvmin Zhang and Maneesh Agrawala). It is not the authors' compiler and does not reproduce the paper's AppWorld experiments.
 
-Not yet listed in the official Hermes plugin catalog.
-
 ## Results at a glance
 
 All measurements are local: one user's sessions, Qwen3.8-27B (IQ3_S, llama.cpp) on a GTX 1080 + GTX 1070, Hermes `0.21.7+158` (`7cc3fb8`). They show what happens on this workload, not that vcc beats every model or every compaction method. Details and caveats are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
@@ -45,12 +43,19 @@ The real-use rows compare different sessions and context sizes (stock ran at a 6
 
 | Check | Result | What it establishes |
 |---|---:|---|
-| Every word in every session-log excerpt appears in the message the line cites | 933 / 933 lines | Log lines quote their source, they don't invent words. This is a bag-of-words check. It says nothing about completeness, and it doesn't check the structured sections. |
+| Every word in every session-log excerpt appears in the message the line cites | 937 / 937 lines | Log lines quote their source, they don't invent words. This is a bag-of-words check. It says nothing about completeness, and it doesn't check the structured sections. |
 | Same check with an invented word planted in a line | 17 / 17 caught | The check can fail. |
 | `[#N]` references in real stored summaries, opened with Hermes's `session_search` | 436 / 436 resolve to the cited message | References point at the right original. |
 | Model calls during a normal vcc compaction | 0 | Tests replace the LLM client with one that fails the test if called. |
 
-**Known issue in 0.3.0.** Before the summary step, Hermes shortens old terminal results to a stub such as ``[terminal] ran `pytest -q` -> exit 1, 40 lines output``. vcc 0.1–0.3 doesn't read the exit code from that stub, so the failed command is classified as successful, and 0.3 lists it as `succeeded` under Commands Run. On the 69 benchmark windows this mislabeled 33 failures. The fix is on the `v0.4` branch and is not released yet.
+**Command outcomes, checked against the raw tool results** on 69 real compaction windows (about 490 checkable commands):
+
+| | 0.3 | 0.4 |
+|---|---:|---:|
+| Commands that failed at least once and are shown as failed | 13 of 43 | **43 of 43** |
+| Commands whose final outcome is stated wrong | 20 | **0** |
+
+Before the summary step, Hermes shortens old terminal results to a stub such as ``[terminal] ran `pytest -q` -> exit 1, 40 lines output``. Up to 0.3, vcc didn't read the exit code from that stub and reported the failure as a success. 0.4 reads it. A run with no exit code at all now reads `ran (no exit code)` instead of `succeeded`. The recall numbers above were measured on 0.3; 0.4 changes only these outcome labels and hasn't been re-measured with the model.
 
 ## The problem
 
@@ -134,7 +139,7 @@ Every file read or changed with a file tool in this part of the session; termina
 
 ## Install
 
-Needs Hermes Agent `0.21.7` or newer. Tested against `0.21.7+158` (`7cc3fb8`).
+Needs Hermes Agent `0.21.7` or newer. The engine tests pass against the `v0.21.7` release and `0.21.7+158` (`7cc3fb8`).
 
 ```bash
 hermes plugins install danbiocchi/hermes-vcc-engine --enable
@@ -208,7 +213,7 @@ The benchmark scripts in `bench/` are separate from the plugin and are not loade
 - **Recall depends on the agent.** The `[#N]` references help only if the agent calls `session_search`.
 - **References need database ids.** Messages Hermes hasn't saved yet get positional `[tN]` labels, which `session_search` can't open.
 - **The prompt cache still resets.** Every compaction rewrites the prompt, the same as stock, so the next request re-reads it. That is why the end-to-end pause shrinks by about 2x, not by the speed-up of the summary step.
-- **Hermes's pruning hides detail first.** Large old tool results reach vcc as Hermes's one-line stubs (see the known issue above).
+- **Hermes's pruning hides detail first.** Large old tool results reach vcc as Hermes's one-line stubs. The command and exit code survive; the output text and any error names in it don't.
 - **Speed-ups depend on hardware and model.** On a fast frontier API the stock summary takes seconds, and a strong model's prose captures decisions vcc leaves out.
 - **`plugins.isolation: host` is untested.** The in-process default is what it's built and tested against.
 
@@ -235,6 +240,8 @@ $PY -I bench/headtohead.py ask FULL STOCK vcc     # questions under each context
 $PY -I bench/headtohead.py report                 # scores and paired tests
 ```
 
+`bench/certainty.py` is a stricter version of the head-to-head. It uses independently generated questions (`bench/questions.py`), asks inside the real post-compaction message list against an untruncated baseline, and reports window-level statistics. A full run takes about a day on the hardware above and hasn't been completed yet.
+
 Your sessions never leave your machine. Frozen inputs, summaries and answers stay in `~/.cache/hermes-vcc-engine/` at mode 0600, and the scripts print no transcript text. The method, the threats to validity and how to read each number are in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ## Development
@@ -242,7 +249,7 @@ Your sessions never leave your machine. Frozen inputs, summaries and answers sta
 ```bash
 git clone https://github.com/danbiocchi/hermes-vcc-engine && cd hermes-vcc-engine
 uv venv --python 3.14 && uv pip install pytest
-.venv/bin/python -m pytest -q          # 83 tests; CI runs Python 3.11 to 3.14
+.venv/bin/python -m pytest -q          # 91 tests; CI runs Python 3.11 to 3.14
 ```
 
 - **Projector tests** run anywhere.
