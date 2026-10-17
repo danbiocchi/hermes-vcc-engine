@@ -34,7 +34,7 @@ SYSTEM = {"role": "system", "content": "You are Hermes."}
 MIN_PROBES = 5
 
 sys.path.insert(0, str(HERMES)); import hermes_bootstrap  # noqa: E402,F401
-sys.path.insert(0, str(REPO)); sys.path.append(str(BENCH))
+sys.path.insert(0, str(REPO / "vcc" if (REPO / "vcc" / "engine.py").is_file() else REPO)); sys.path.append(str(BENCH))
 os.chdir(Path.home())
 import engine, projector, accuracy  # noqa: E402
 from agent.model_metadata import estimate_messages_tokens_rough as est_msgs, estimate_tokens_rough as est  # noqa: E402

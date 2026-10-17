@@ -40,11 +40,17 @@ PROJECTOR_BUDGETS = (6000, 23592)
 CONTEXT_LENGTH = 98_304
 
 
+
+def _code_dir(repo: Path) -> Path:
+    """Where the plugin's modules live: ``vcc/`` from 0.4.1, the checkout root before that."""
+    return repo / "vcc" if (repo / "vcc" / "engine.py").is_file() else repo
+
+
 def _setup(repo: Path, hermes_dir: Path) -> None:
     sys.path.insert(0, str(hermes_dir))
     import hermes_bootstrap  # noqa: F401  (activates Hermes's dependency tree)
 
-    sys.path.insert(0, str(repo))
+    sys.path.insert(0, str(_code_dir(repo)))
 
 
 def _load_sessions(db_path: Path, min_messages: int) -> list[tuple[str, list[dict]]]:

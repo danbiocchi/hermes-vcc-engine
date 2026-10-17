@@ -12,7 +12,7 @@ Questions are generated from the transcript, not by a model, and graded by exact
 an exit outcome, an error token, a yes/no with planted absent-fact controls). "No accuracy loss"
 means VCC scores at least as high as FULL within noise, and at least as high as STOCK.
 
-Needs the local model at --base-url. Writes bench/accuracy.json. Transcript text stays local;
+Needs the local model at --base-url. Writes bench/results/accuracy.json. Transcript text stays local;
 only scores are printed.
 
     ~/.hermes/tools/python-*/bin/python3 -I bench/accuracy.py --model <id>
@@ -35,11 +35,17 @@ STOP = set("the a an and or to of in on for with your you this that was were is 
            "please can could would make made run ran use used file files code need want".split())
 
 
+
+def _code_dir(repo: Path) -> Path:
+    """Where the plugin's modules live: ``vcc/`` from 0.4.1, the checkout root before that."""
+    return repo / "vcc" if (repo / "vcc" / "engine.py").is_file() else repo
+
+
 def _setup(repo: Path, hermes_dir: Path) -> None:
     sys.path.insert(0, str(hermes_dir))
     import hermes_bootstrap  # noqa: F401
 
-    sys.path.insert(0, str(repo))
+    sys.path.insert(0, str(_code_dir(repo)))
 
 
 def _text(projector, content) -> str:
@@ -329,7 +335,7 @@ def main() -> int:
     ap.add_argument("--hermes-dir", default="~/.hermes/hermes-agent")
     ap.add_argument("--repo", default=str(here))
     ap.add_argument("--corpus", default=str(cache / "corpus.json"))
-    ap.add_argument("--out", default=str(here / "bench" / "accuracy.json"))
+    ap.add_argument("--out", default=str(here / "bench" / "results" / "accuracy.json"))
     ap.add_argument("--regions", type=int, default=5)
     ap.add_argument("--min-probes", type=int, default=6)
     ap.add_argument("--max-region-chars", type=int, default=40000)

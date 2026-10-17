@@ -3,11 +3,11 @@
 Enable with ``context.engine: vcc`` in config.yaml. See README.md.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 
 def register(ctx) -> None:
     # Imported here so loading the package stays cheap and side-effect free.
-    from .engine import VccEngine
+    from .vcc.engine import VccEngine
 
     ctx.register_context_engine(VccEngine())

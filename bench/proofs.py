@@ -37,6 +37,12 @@ OWN_REF = re.compile(r"(?m)^(?:- )?\[#(\d+)\]")
 ALNUM_RUN = re.compile(r"[A-Za-z0-9]{2,}")
 
 
+
+def _code_dir(repo: Path) -> Path:
+    """Where the plugin's modules live: ``vcc/`` from 0.4.1, the checkout root before that."""
+    return repo / "vcc" if (repo / "vcc" / "engine.py").is_file() else repo
+
+
 def _setup(repo: Path, hermes_dir: Path) -> bool:
     """Put the plugin on the path, and Hermes too when it is available.
 
@@ -44,7 +50,7 @@ def _setup(repo: Path, hermes_dir: Path) -> bool:
     run anywhere (CI included). Reference integrity needs Hermes's ``session_search`` and a
     real ``state.db``; the caller skips it when this returns False.
     """
-    sys.path.insert(0, str(repo))
+    sys.path.insert(0, str(_code_dir(repo)))
     if not (hermes_dir / "agent" / "context_compressor.py").is_file():
         return False
     sys.path.insert(0, str(hermes_dir))

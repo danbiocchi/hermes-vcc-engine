@@ -22,7 +22,7 @@ jobs:
           allow-prereleases: true
       - run: python -m pip install "pytest>=8,<10"
       # Engine tests need a Hermes install and skip here; run them locally against yours.
-      - run: python -m pytest -q -rs
+      - run: python -m pytest tests -q -rs
         env:
           HERMES_AGENT_DIR: /nonexistent
       # Faithfulness + negative control on generated transcripts; needs no private data.

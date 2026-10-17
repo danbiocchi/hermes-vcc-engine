@@ -51,8 +51,8 @@ The paper tests this in one setting. On AppWorld, a *reflector* model reads exec
 |---|---|
 | Input: a finished Claude Code JSONL trace | Input: the middle of a live Hermes conversation, as OpenAI-format message dicts |
 | Reader: a separate reflector model doing trace analysis | Reader: the same agent, after compaction, continuing its own work |
-| Views: full / UI / adaptive | One view: a structured summary with fixed sections and a session log (`projector.py:_render`) |
-| Stable references: line numbers into the full view | Stable references: `[#N]`, the message's row id in Hermes's `state.db` (`projector.py:_ref`) |
+| Views: full / UI / adaptive | One view: a structured summary with fixed sections and a session log (`vcc/projector.py:_render`) |
+| Stable references: line numbers into the full view | Stable references: `[#N]`, the message's row id in Hermes's `state.db` (`vcc/projector.py:_ref`) |
 | Full view: the original file | Full view: the archived rows in `state.db`, read with Hermes's `session_search` tool |
 
 What carries over is the central choice. The reduced view is **computed** from the trace by fixed rules, and every line points back to its source. It is not a rewrite by a model. What does not carry over is the paper's evidence: its AppWorld results say nothing about Hermes compaction. The evidence for this plugin is the plugin's own (section 7).
@@ -61,10 +61,10 @@ What carries over is the central choice. The reduced view is **computed** from t
 
 ## 3. What vcc changes inside Hermes
 
-The engine (`engine.py:VccEngine`) subclasses Hermes's `ContextCompressor` and overrides `_generate_summary`, the step that would call the summary LLM. The README says "one method". To be precise, the subclass also:
+The engine (`vcc/engine.py:VccEngine`) subclasses Hermes's `ContextCompressor` and overrides `_generate_summary`, the step that would call the summary LLM. The README says "one method". To be precise, the subclass also:
 
-- reads the `compression:` section of `config.yaml` itself in `__init__` (`engine.py:_compressor_kwargs`), because Hermes does not pass it to plugin engines;
-- forces `_aux_context_ceiling` to `None` (`engine.py:VccEngine._aux_context_ceiling`), so the summary model's context window cannot lower the compaction trigger; the summary model never runs on the normal path;
+- reads the `compression:` section of `config.yaml` itself in `__init__` (`vcc/engine.py:_compressor_kwargs`), because Hermes does not pass it to plugin engines;
+- forces `_aux_context_ceiling` to `None` (`vcc/engine.py:VccEngine._aux_context_ceiling`), so the summary model's context window cannot lower the compaction trigger; the summary model never runs on the normal path;
 - adds counters to `get_status` and a `clone_for_agent` that builds a fresh instance.
 
 None of these changes what gets compacted or kept. `compress()` itself is inherited unchanged.
@@ -124,9 +124,9 @@ then, in agent/conversation_compression.py:
 
 When to compact, what stays verbatim, tool call/result pairing, redaction, the session-DB archive, cancellation and the failure cooldowns are all Hermes's code, run the same way under either engine.
 
-Inside vcc's `_generate_summary` (`engine.py:VccEngine._generate_summary`):
+Inside vcc's `_generate_summary` (`vcc/engine.py:VccEngine._generate_summary`):
 
-1. If the Hermes build is missing any internal the engine relies on (`engine.py:_missing_seams`), it calls the stock method (passthrough).
+1. If the Hermes build is missing any internal the engine relies on (`vcc/engine.py:_missing_seams`), it calls the stock method (passthrough).
 2. It calls `projector.project(turns, budget_chars=..., previous=<last summary>, focus=<focus topic>)`.
 3. It runs Hermes's own post-processing in the same order as the stock method (the list in the diagram above).
 4. The anchor index is built by `anchors.build`, a faster equivalent of Hermes's `_build_anchor_index`, when it has been verified (section 4). `_augment_summary_lean` adds the remaining sections.
@@ -140,11 +140,11 @@ Inside vcc's `_generate_summary` (`engine.py:VccEngine._generate_summary`):
 
 ### No model call
 
-The stock `_generate_summary` spends nearly all its time in `_call_summary_llm`. vcc's version contains no network call and no model. `projector.py` imports only `json`, `re`, `collections.abc`, `dataclasses` and `typing`, and does no I/O.
+The stock `_generate_summary` spends nearly all its time in `_call_summary_llm`. vcc's version contains no network call and no model. `vcc/projector.py` imports only `json`, `re`, `collections.abc`, `dataclasses` and `typing`, and does no I/O.
 
 ### One linear pass with bounded per-message work
 
-`projector.py:_project_turns` walks the messages once. For each message it does a bounded amount of work, however large the content is:
+`vcc/projector.py:_project_turns` walks the messages once. For each message it does a bounded amount of work, however large the content is:
 
 - `clean()` cuts any input longer than `4 * limit + 128` chars to head + tail *before* running any regex, so cleanup costs O(limit), not O(message size). The limits are small (`Limits`: 160 chars for a call or result excerpt, 400 for assistant text, 600 for user text and errors).
 - `_result_from` parses JSON only up to 256 KiB (`_JSON_PARSE_MAX`). Error detection and error-name extraction look only at a scan window: the first 4,000 and last 2,000 chars (`_scan`).
@@ -156,12 +156,12 @@ Overall cost is O(number of messages) plus O(total characters inside the scan wi
 
 ### The v0.2 optimizations (output byte-identical to v0.1)
 
-From `CHANGELOG.md` 0.2.0 and the code:
+From `docs/CHANGELOG.md` 0.2.0 and the code:
 
-- **Guarded cleanup** (`projector.py:clean`). Each rewrite runs only when the text could contain its target: the ANSI regex needs `\x1b`, the marker regex needs `<` or `[`, the control-character table needs `not text.isprintable()`. Whitespace collapses with `split()`/`join()`.
-- **Literal-first error detection** (`projector.py:_has_error_text`). The case-insensitive regex is replaced by lowercasing once, testing fixed phrases with `in`, and running the small anchored regexes only where a trigger word occurs. This is exact unless the text contains one of the four non-ASCII characters that case-fold onto ASCII letters (`İ ı ſ K`, `_ASCII_CASE_FOLDS`); in that case the original regex runs.
-- **Exact error-name scan** (`projector.py:_error_names`). It finds `Error`/`Exception` suffixes and checks only the alphanumeric run around each one, instead of running a word-boundary regex over long lines.
-- **Fast anchor index** (`anchors.py:build`). Hermes's anchor patterns cannot match across a newline, and each one needs a literal (`.py`, `fix/`, `Error`, `http`, ...). So each pattern scans only the lines containing its literal, joined in their original order, and finds the same matches. Commit hashes have no literal; those lines are found with a `bytes.translate` hex mask (`_hexrun_lines`). If more than half the lines qualify, the full text is scanned instead. The fast path is checked against Hermes's builder on an edge-case fixture once per process (`anchors.py:verify`) and again on the first real compaction (`engine.py:_vcc_fast_anchor_section`). Any difference turns it off for the rest of the process.
+- **Guarded cleanup** (`vcc/projector.py:clean`). Each rewrite runs only when the text could contain its target: the ANSI regex needs `\x1b`, the marker regex needs `<` or `[`, the control-character table needs `not text.isprintable()`. Whitespace collapses with `split()`/`join()`.
+- **Literal-first error detection** (`vcc/projector.py:_has_error_text`). The case-insensitive regex is replaced by lowercasing once, testing fixed phrases with `in`, and running the small anchored regexes only where a trigger word occurs. This is exact unless the text contains one of the four non-ASCII characters that case-fold onto ASCII letters (`İ ı ſ K`, `_ASCII_CASE_FOLDS`); in that case the original regex runs.
+- **Exact error-name scan** (`vcc/projector.py:_error_names`). It finds `Error`/`Exception` suffixes and checks only the alphanumeric run around each one, instead of running a word-boundary regex over long lines.
+- **Fast anchor index** (`vcc/anchors.py:build`). Hermes's anchor patterns cannot match across a newline, and each one needs a literal (`.py`, `fix/`, `Error`, `http`, ...). So each pattern scans only the lines containing its literal, joined in their original order, and finds the same matches. Commit hashes have no literal; those lines are found with a `bytes.translate` hex mask (`_hexrun_lines`). If more than half the lines qualify, the full text is scanned instead. The fast path is checked against Hermes's builder on an edge-case fixture once per process (`vcc/anchors.py:verify`) and again on the first real compaction (`vcc/engine.py:_vcc_fast_anchor_section`). Any difference turns it off for the rest of the process.
 
 `bench/bench.py --check-golden` hashes every output on a frozen corpus to show these changes produced the same bytes.
 
@@ -217,13 +217,13 @@ The wait before the model can start its next reply is a median of 9.3x shorter p
 
 ### (a) The summary is extractive
 
-Every line in the session log is `[ref] <role or arrow> <excerpt>`, and the excerpt is a cleaned substring of the cited message (`projector.py:_project_turns`). User text, assistant text (with `<think>` blocks removed), a tool call's target argument, or a tool result's status and excerpt. Nothing in the log is generated. The fixed parts are the section headings, the arrows, and status words derived from structured fields (`exit_code`, `error`, `success`).
+Every line in the session log is `[ref] <role or arrow> <excerpt>`, and the excerpt is a cleaned substring of the cited message (`vcc/projector.py:_project_turns`). User text, assistant text (with `<think>` blocks removed), a tool call's target argument, or a tool result's status and excerpt. Nothing in the log is generated. The fixed parts are the section headings, the arrows, and status words derived from structured fields (`exit_code`, `error`, `success`).
 
 `bench/proofs.py` checks this mechanically (`Checker._check_line`). For each log line it confirms that the role matches the cited message, that the tool name matches one of its tool calls, that a printed exit code equals the stored `exit_code`, and that every alphanumeric run of 2+ characters in the excerpt occurs in that message's own text. A **negative control** appends an invented word to one log line per session and requires the same checker to reject it. If it didn't, a clean pass would prove nothing. In CI, on generated transcripts: `python bench/proofs.py --synthetic` gives 1,095 / 1,095 lines verified and 5 / 5 planted fabrications rejected (run while writing this document).
 
 ### (b) `[#N]` lets the agent recover any original
 
-`[#N]` is the message's `state.db` row id (`projector.py:_ref`, from `_row_id`). When Hermes archives a compaction, `SessionDB.archive_and_compact` marks the old rows `active=0, compacted=1`. They are no longer sent to the model, but they are not deleted and remain searchable. Hermes's own `session_search(session_id=..., around_message_id=N)` (`tools/session_search_tool.py:_scroll`) returns message N and its neighbours. The log header tells the model how to call it (`projector.py:_render`), and Hermes's own recovery footer repeats it (`_build_recovery_footer`). `bench/proofs.py` opens every `[#N]` that vcc wrote into real stored summaries through that tool and checks that the right message comes back.
+`[#N]` is the message's `state.db` row id (`vcc/projector.py:_ref`, from `_row_id`). When Hermes archives a compaction, `SessionDB.archive_and_compact` marks the old rows `active=0, compacted=1`. They are no longer sent to the model, but they are not deleted and remain searchable. Hermes's own `session_search(session_id=..., around_message_id=N)` (`tools/session_search_tool.py:_scroll`) returns message N and its neighbours. The log header tells the model how to call it (`vcc/projector.py:_render`), and Hermes's own recovery footer repeats it (`_build_recovery_footer`). `bench/proofs.py` opens every `[#N]` that vcc wrote into real stored summaries through that tool and checks that the right message comes back.
 
 So a detail that is not *in* the summary can still be *reached* from it, one tool call away.
 
@@ -251,7 +251,7 @@ The stock prompt asks the summarizer to "PRESERVE EXACTLY: PR/issue numbers, fil
 
 v0.2 summaries already contained the facts, but the model often failed to use them: it answered UNKNOWN 153 times out of 226 in the round-1 head-to-head. v0.3 changed only the wording (`CHANGELOG.md` 0.3.0):
 
-- File verbs are written in plain words next to the tool verb: `modified (patched)`, `written (created or overwritten)` (`projector.py:_PLAIN_VERBS`). Before, a file only tagged `patched` often wasn't recognised as an answer to "was it modified?".
+- File verbs are written in plain words next to the tool verb: `modified (patched)`, `written (created or overwritten)` (`vcc/projector.py:_PLAIN_VERBS`). Before, a file only tagged `patched` often wasn't recognised as an answer to "was it modified?".
 - Each command shows its outcome: `failed (exit 1), then succeeded (exit 0)` (`_outcome_text`). Before, the outcome sat in a separate log line.
 - Error names get their own short list (`ERROR_NAMES_HEADING`) instead of being scattered through the log.
 - An inherited prose summary may use at most 15% of the budget (`Limits.earlier_share`, previously 35%).
@@ -305,7 +305,7 @@ Things to notice:
 - The last line quotes the assistant, whose own explanation is backwards (the patch renamed `_parse` to `parse`). vcc copies what was said. It does not check it.
 - There is no "Key Decisions" section. The patch's `old_string`/`new_string` arguments are not shown either: only the path, which is the call's target. Getting the diff takes `session_search(around_message_id=1005)` or `1006`.
 
-Inside Hermes, `_augment_summary_lean` then adds three sections (`engine.py:_generate_summary`, output of the same input through `VccEngine`):
+Inside Hermes, `_augment_summary_lean` then adds three sections (`vcc/engine.py:_generate_summary`, output of the same input through `VccEngine`):
 
 ```
 ## Anchor Index (mechanically extracted, exact)
@@ -327,12 +327,12 @@ These sections come from Hermes, and the stock path adds them too. (The anchor i
 
 ## 6. What it gives up
 
-- **No reasoning, decisions or rationale.** The stock template asks for Key Decisions, Constraints & Preferences, Active State and Critical Context. vcc writes none of them (`projector.py` module docstring: "Sections that need judgement ... are left out rather than guessed"). If the agent's next step depends on *why* something was done, that reason survives only as an excerpt of an assistant message, capped at 400 chars, or not at all.
+- **No reasoning, decisions or rationale.** The stock template asks for Key Decisions, Constraints & Preferences, Active State and Critical Context. vcc writes none of them (`vcc/projector.py` module docstring: "Sections that need judgement ... are left out rather than guessed"). If the agent's next step depends on *why* something was done, that reason survives only as an excerpt of an assistant message, capped at 400 chars, or not at all.
 - **"Fixed" and "error" are heuristics.** Errors & Fixes pairs a failure with a later success of the *identical* call (key `name:target[:200]`). A fix that ran a different command shows up as Blocked, and an unrelated retry that happened to pass shows up as a fix. "Error Names Seen" lists names found in *any* tool output, including a successful `grep` that printed `ImportError`. The section header says "appeared in tool output" for that reason, but a model can still read it as "was raised".
-- **Hermes's Phase-1 stubs hide failures from vcc.** `compress()` replaces old tool results over 200 chars with a one-line stub before vcc sees them (section 3). The terminal stub reads `[terminal] ran \`cmd\` -> exit 1, N lines output` (`_sum_terminal`). vcc's text classifier only recognises `"exit_code": N` JSON, `exit code N`/`exit status N`, or error phrases, so it marks that stub `ok`. Checked while writing this document: in a full `compress()` with a 3.6k-char failing pytest output, the log line read `← terminal ok: [terminal] ran 'pytest -q' -> exit 1, ...` and Commands Run read `pytest -q — succeeded`. The error name was also lost, because the stub doesn't contain it. The exit code is still visible in the excerpt, but the structured sections are wrong. **This was a bug in 0.1–0.3, and it affected exactly the large failing outputs that matter most.** On 69 real windows, 0.3 showed 13 of 43 failing commands as failed and stated the wrong final outcome for 20 commands. 0.4 reads the stub's exit code (`projector.py:_TERMINAL_STUB_RE`): it shows all 43 and states no final outcome wrong. A run with no exit code at all reads `ran (no exit code)`. Output text and error names inside a pruned result are still lost; only the stub survives. The benchmarks don't catch it: `bench/proofs.py` projects unpruned transcripts, and the head-to-head command questions are generated only where the tool result is still JSON with an `exit_code`, which a pruned stub is not.
-- **Caps decide what is dropped at high compression.** Per-section caps (`Limits`): 40 files, 25 commands, 12 blocked, 12 fixes, 20 error names. Older entries are cut first, and Relevant Files says how many it omitted. Commands keep at most the last four outcome groups (`_outcome_text`). The whole summary must fit `budget_chars`: the smallest of 6% of the window, Hermes's content-scaled budget (`_compute_summary_budget`, which itself is at most 5% of the window), and 8,000 tokens, but at least 1,500 tokens, times 4 chars (`engine.py:_vcc_budget_chars`). `_fit` then (1) drops the oldest log lines not marked `keep`, (2) shortens kept lines (user turns, failures, focus matches) to 160 chars, (3) drops kept lines oldest first except the newest user line, and (4) hard-truncates. On 17 real sessions compacted to their configured budgets, 205 / 269 commands and 41 / 45 modified files survived into the summary (`bench/proofs.py`, retention). What is dropped stays in `state.db`, but the summary doesn't mention it unless a "… N lines omitted" note does.
+- **Hermes's Phase-1 stubs hide failures from vcc.** `compress()` replaces old tool results over 200 chars with a one-line stub before vcc sees them (section 3). The terminal stub reads `[terminal] ran \`cmd\` -> exit 1, N lines output` (`_sum_terminal`). vcc's text classifier only recognises `"exit_code": N` JSON, `exit code N`/`exit status N`, or error phrases, so it marks that stub `ok`. Checked while writing this document: in a full `compress()` with a 3.6k-char failing pytest output, the log line read `← terminal ok: [terminal] ran 'pytest -q' -> exit 1, ...` and Commands Run read `pytest -q — succeeded`. The error name was also lost, because the stub doesn't contain it. The exit code is still visible in the excerpt, but the structured sections are wrong. **This was a bug in 0.1–0.3, and it affected exactly the large failing outputs that matter most.** On 69 real windows, 0.3 showed 13 of 43 failing commands as failed and stated the wrong final outcome for 20 commands. 0.4 reads the stub's exit code (`vcc/projector.py:_TERMINAL_STUB_RE`): it shows all 43 and states no final outcome wrong. A run with no exit code at all reads `ran (no exit code)`. Output text and error names inside a pruned result are still lost; only the stub survives. The benchmarks don't catch it: `bench/proofs.py` projects unpruned transcripts, and the head-to-head command questions are generated only where the tool result is still JSON with an `exit_code`, which a pruned stub is not.
+- **Caps decide what is dropped at high compression.** Per-section caps (`Limits`): 40 files, 25 commands, 12 blocked, 12 fixes, 20 error names. Older entries are cut first, and Relevant Files says how many it omitted. Commands keep at most the last four outcome groups (`_outcome_text`). The whole summary must fit `budget_chars`: the smallest of 6% of the window, Hermes's content-scaled budget (`_compute_summary_budget`, which itself is at most 5% of the window), and 8,000 tokens, but at least 1,500 tokens, times 4 chars (`vcc/engine.py:_vcc_budget_chars`). `_fit` then (1) drops the oldest log lines not marked `keep`, (2) shortens kept lines (user turns, failures, focus matches) to 160 chars, (3) drops kept lines oldest first except the newest user line, and (4) hard-truncates. On 17 real sessions compacted to their configured budgets, 205 / 269 commands and 41 / 45 modified files survived into the summary (`bench/proofs.py`, retention). What is dropped stays in `state.db`, but the summary doesn't mention it unless a "… N lines omitted" note does.
 - **The budget covers only vcc's part.** Hermes then appends the anchor index (up to 7,000 chars) and the verbatim user messages (up to 24,000 chars) (`_LEAN_ANCHOR_BUDGET_CHARS`, `_LEAN_USER_MESSAGES_BUDGET_CHARS`). The full summary message can be well over the configured 6%.
-- **`[tN]` refs when messages have no DB id.** `[#N]` needs `_row_id` on the message (`projector.py:_ref`). Messages not yet written to `state.db` get `[t<index>]`, a position in this compaction's input, which `session_search` cannot open.
+- **`[tN]` refs when messages have no DB id.** `[#N]` needs `_row_id` on the message (`vcc/projector.py:_ref`). Messages not yet written to `state.db` get `[t<index>]`, a position in this compaction's input, which `session_search` cannot open.
 - **Recovery depends on the agent.** The summary *tells* the model to call `session_search` for details. Nothing forces it to. A model that guesses instead of looking up gets no benefit from the references. The head-to-head's main conditions do not let the model look anything up (the `ask` stage is single-shot), so section 7's numbers measure what is *in* the summary, not what can be recovered through it.
 - **The prompt cache resets, the same as stock.** See section 4. vcc does not reduce the re-prefill after compaction, except through the summary's size.
 - **Passthrough and fallback are coarse.** If Hermes lacks an internal the engine relies on, every compaction uses the stock LLM summary. If Hermes's feasibility skip or fallback streak fires, Hermes inserts its own static fallback and vcc never runs (`compress()` Phase 3).
@@ -420,7 +420,7 @@ Also established by this harness:
 
 1. **"FULL" is not the raw transcript.** `headtohead.py:context("FULL")` renders `e["turns"]`: the turns *after* Hermes's Phase-1 pruning, with tool results cut to 1,500 chars and call arguments to 600 (`accuracy.py:render_full`). Large old tool outputs are already one-line stubs in this baseline. "vcc matches FULL" therefore means "vcc matches the pruned middle region", not "vcc matches never compacting". This applies to round 1 only; the 0.4.0 report uses the untruncated message list.
 2. **The questions ask about what vcc extracts.** Every probe type (modified files from `patch`/`write_file`/`edit_file`, terminal exit codes, `*Error`/`*Exception` tokens in tool output, the first user request) has a dedicated vcc section, and the v0.3 changes were made after looking at v0.2's results on this question set. The benchmark measures retention of these structured facts. It does not test reasoning, decisions, file contents, or whether the agent completes its next task. A stock summary may keep information these questions never ask about. The 0.4.0 report adds an independent generator, and the ranking holds on it, but both sets are still factual questions.
-3. **Error probes and "Error Names Seen" use nearly the same definition.** Both match error-name tokens anywhere in tool output, failed call or not (`accuracy.py:ERROR_TOKEN`, `projector.py:_error_names`). vcc's lead on error questions partly reflects that match. The independent generator also asks about error names that literally appear in tool results, so the same caution applies to its error family (18 questions).
+3. **Error probes and "Error Names Seen" use nearly the same definition.** Both match error-name tokens anywhere in tool output, failed call or not (`accuracy.py:ERROR_TOKEN`, `vcc/projector.py:_error_names`). vcc's lead on error questions partly reflects that match. The independent generator also asks about error names that literally appear in tool results, so the same caution applies to its error family (18 questions).
 4. **Pruned failures are invisible to the benchmark.** Command probes are generated only for tool results that are still JSON with `exit_code`. Old large outputs, which are pruned, generate no command probe, and that is exactly where vcc 0.1–0.3 misreported outcomes (section 6). The independent generator reads Hermes's stubs, so the 0.4.0 report covers them.
 5. **Small sample, one model, one user.** The 0.4.0 report uses 23 compaction windows from four of one person's sessions, one model (Qwen 27B, IQ3_S) and temperature 0. Round 1 used 13 windows, and there one session accounted for most of the vcc-vs-stock difference. Paraphrased and generated wordings of the same question are not independent. Single-shot answers with `max_tokens=48` and thinking disabled may favour terse, structured contexts.
 6. **No recovery in the main comparison.** The `[#N]` lookup is not exercised in the head-to-head. (`accuracy.py` has a `VCC+RECALL` condition with one lookup round, but the head-to-head doesn't use it.)

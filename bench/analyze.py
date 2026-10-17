@@ -4,7 +4,7 @@ Every condition answers the SAME probes, so the right test is McNemar's exact te
 discordant pairs: of the probes where two conditions disagree, how lopsided is the split?
 Also prints a Wilson 95% interval per condition, which is honest about small samples.
 
-    python bench/analyze.py bench/accuracy-paired.json [more.json ...]
+    python bench/analyze.py bench/results/accuracy-paired.json [more.json ...]
 """
 
 from __future__ import annotations
@@ -69,4 +69,4 @@ def main(paths: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:] or ["bench/accuracy-paired.json"]))
+    sys.exit(main(sys.argv[1:] or ["bench/results/accuracy-paired.json"]))

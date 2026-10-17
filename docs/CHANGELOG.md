@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+A tidier repository. The summary output and the engine's behavior are unchanged.
+
+- The engine's modules (`engine.py`, `projector.py`, `anchors.py`) and `NOTICE` moved into `vcc/`. The top level keeps only what Hermes needs to load the plugin (`__init__.py`, `plugin.yaml`), the README and the license.
+- `CHANGELOG.md` moved to `docs/`, `pytest.ini` to `tests/` (run the suite with `pytest tests`), and the round-0 accuracy results to `bench/results/`.
+- The benchmark scripts still accept older checkouts through `--repo` / `VCC_REPO`: they look for the modules in `vcc/` and fall back to the checkout root.
+
 ## 0.4.0
 
 Command outcomes are now right when Hermes has already shortened a result.

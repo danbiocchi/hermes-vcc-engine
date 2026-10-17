@@ -181,13 +181,13 @@ Everything is optional, set under `context.vcc` in `config.yaml`. Out-of-range v
 | `min_budget_tokens` | `1500` | 300–50,000 | Smallest summary budget |
 | `max_budget_tokens` | `8000` | 500–100,000 | Largest summary budget |
 | `fallback_to_llm` | `true` | bool | If the summary raises an error, use Hermes's stock LLM summary for that pass |
-| `fast_anchors` | `true` | bool | Build Hermes's anchor index with `anchors.py`, which is checked against Hermes's own builder and switches itself off on any mismatch |
+| `fast_anchors` | `true` | bool | Build Hermes's anchor index with `vcc/anchors.py`, which is checked against Hermes's own builder and switches itself off on any mismatch |
 
-The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens`. Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults (`threshold`, `protect_last_n`, `target_ratio` and the rest; see `engine.py:_compressor_kwargs`).
+The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens`. Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults (`threshold`, `protect_last_n`, `target_ratio` and the rest; see `vcc/engine.py:_compressor_kwargs`).
 
 ## Security and privacy
 
-What the plugin's runtime code (`__init__.py`, `engine.py`, `projector.py`, `anchors.py`) does and doesn't do:
+What the plugin's runtime code (`__init__.py` and the `vcc/` folder) does and doesn't do:
 
 - **Network:** no network calls of its own, and no model call on the normal path. If `fallback_to_llm` is on and a summary raises an error, Hermes's own summary call runs for that pass, to the model Hermes is configured to use.
 - **Files:** reads Hermes's `config.yaml` once, through Hermes's `load_config_readonly`. It reads no other files, writes no files, and doesn't open `state.db`.
@@ -249,7 +249,7 @@ To benchmark another context engine with the same harness, set `VCC_OTHER=<path 
 ```bash
 git clone https://github.com/danbiocchi/hermes-vcc-engine && cd hermes-vcc-engine
 uv venv --python 3.14 && uv pip install pytest
-.venv/bin/python -m pytest -q          # 91 tests; CI runs Python 3.11 to 3.14
+.venv/bin/python -m pytest tests -q    # 91 tests; CI runs Python 3.11 to 3.14
 ```
 
 The projector tests run anywhere. The engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They:
@@ -258,7 +258,7 @@ The projector tests run anywhere. The engine and anchor tests need a Hermes chec
 - compare the fast anchor index against Hermes's own
 - load the plugin through Hermes's loader in a sandboxed `HERMES_HOME`
 
-`hermes plugins validate . --install-deps` passes on this repository. Version history is in [CHANGELOG.md](CHANGELOG.md).
+`hermes plugins validate . --install-deps` passes on this repository. Version history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## Research background
 
@@ -269,4 +269,4 @@ The projector tests run anywhere. The engine and anchor tests need a Hermes chec
 
 ## License
 
-Apache-2.0. `anchors.py` mirrors the structure of Hermes's anchor index builder (MIT); see [NOTICE](NOTICE).
+Apache-2.0. `vcc/anchors.py` mirrors the structure of Hermes's anchor index builder (MIT); see [vcc/NOTICE](vcc/NOTICE).
