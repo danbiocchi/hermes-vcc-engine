@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="518" viewBox="0 0 960 518" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif"><rect width="960" height="518" rx="12" fill="#0d1117"/>
+<text x="24" y="34" font-size="19" font-weight="700" fill="#e6edf3" text-anchor="start">Compaction step</text>
+<text x="24" y="55" font-size="13.5" font-weight="400" fill="#9198a1" text-anchor="start">Hermes writes the summary while you wait</text>
+<text x="936" y="34" font-size="19" font-weight="800" fill="#56d364" text-anchor="end">~9,000x faster</text>
+<text x="256" y="89" font-size="15" font-weight="400" fill="#9198a1" text-anchor="end">Stock Hermes</text>
+<rect x="270" y="74" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="74" width="540.0" height="22" rx="5" fill="#5c6670"/>
+<text x="820.0" y="90" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="start">8 min 8 s</text>
+<text x="256" y="123" font-size="15" font-weight="600" fill="#e6edf3" text-anchor="end">VCC Engine</text>
+<rect x="270" y="108" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="108" width="3.0" height="22" rx="5" fill="#3fb950"/>
+<text x="283" y="124" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">0.055 s</text>
+<line x1="24" x2="936" y1="144" y2="144" stroke="#30363d"/>
+<text x="24" y="182" font-size="19" font-weight="700" fill="#e6edf3" text-anchor="start">Wait before the model can reply</text>
+<text x="24" y="203" font-size="13.5" font-weight="400" fill="#9198a1" text-anchor="start">compaction + the model reading the new, shorter prompt</text>
+<text x="936" y="182" font-size="19" font-weight="800" fill="#56d364" text-anchor="end">~9x shorter</text>
+<text x="256" y="237" font-size="15" font-weight="400" fill="#9198a1" text-anchor="end">Stock Hermes</text>
+<rect x="270" y="222" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="222" width="540.0" height="22" rx="5" fill="#5c6670"/>
+<text x="820.0" y="238" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="start">8 min 59 s</text>
+<text x="256" y="271" font-size="15" font-weight="600" fill="#e6edf3" text-anchor="end">VCC Engine</text>
+<rect x="270" y="256" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="256" width="70.1" height="22" rx="5" fill="#3fb950"/>
+<text x="350.12987012987014" y="272" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">1 min 10 s</text>
+<line x1="24" x2="936" y1="292" y2="292" stroke="#30363d"/>
+<text x="24" y="330" font-size="19" font-weight="700" fill="#e6edf3" text-anchor="start">Questions answered correctly after compaction</text>
+<text x="24" y="351" font-size="13.5" font-weight="400" fill="#9198a1" text-anchor="start">832 graded answers about what happened before the cut</text>
+<text x="936" y="330" font-size="19" font-weight="800" fill="#56d364" text-anchor="end">+14.8 pts vs stock</text>
+<text x="256" y="385" font-size="15" font-weight="600" fill="#e6edf3" text-anchor="end">VCC Engine</text>
+<rect x="270" y="370" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="370" width="491.4" height="22" rx="5" fill="#3fb950"/>
+<text x="771.4000000000001" y="386" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">91.0%</text>
+<text x="256" y="419" font-size="15" font-weight="400" fill="#9198a1" text-anchor="end">Full transcript (no cut)</text>
+<rect x="270" y="404" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="404" width="470.3" height="22" rx="5" fill="#58799e"/>
+<text x="750.3399999999999" y="420" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="start">87.1%</text>
+<text x="256" y="453" font-size="15" font-weight="400" fill="#9198a1" text-anchor="end">Stock Hermes</text>
+<rect x="270" y="438" width="540" height="22" rx="5" fill="#1c2128"/>
+<rect x="270" y="438" width="411.5" height="22" rx="5" fill="#5c6670"/>
+<text x="691.48" y="454" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="start">76.2%</text>
+<line x1="24" x2="936" y1="474" y2="474" stroke="#30363d"/>
+<text x="24" y="500" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">Times are medians over 23 real compaction windows (56k–75k tokens). Local Qwen3.8-27B on a GTX 1080 + 1070, Hermes 0.21.7.</text>
+</svg>
