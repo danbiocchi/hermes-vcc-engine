@@ -25,6 +25,8 @@ Restart Hermes (CLI, gateway or web UI). Every compaction now logs `vcc: project
 
 Changed your mind? `hermes config set context.engine compressor` puts the stock compressor back.
 
+Works with Hermes `0.21.7` or newer. The engine tests pass on the `v0.21.7` and `v0.22.2` releases, and a live compaction with a local model was checked on `v0.22.2`.
+
 ## Who it's for
 
 - ✅ **You run Hermes on a local or slow model**, and long sessions stall for minutes every time the context fills up.
