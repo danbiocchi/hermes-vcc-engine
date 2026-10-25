@@ -25,7 +25,7 @@ Restart Hermes (CLI, gateway or web UI). Every compaction now logs `vcc: project
 
 Changed your mind? `hermes config set context.engine compressor` puts the stock compressor back.
 
-Works with Hermes `0.21.7` or newer. The engine tests pass on the `v0.21.7` and `v0.22.2` releases, and a live compaction with a local model was checked on `v0.22.2`.
+Works with Hermes `0.21.7` or newer. The engine tests pass on the `v0.21.7`, `v0.22.2` and `v0.22.4` releases, and a live compaction with a local model was checked on `v0.22.2`.
 
 ## Who it's for
 
@@ -185,7 +185,9 @@ Everything is optional, set under `context.vcc` in `config.yaml`. Out-of-range v
 | `fallback_to_llm` | `true` | bool | If the summary raises an error, use Hermes's stock LLM summary for that pass |
 | `fast_anchors` | `true` | bool | Build Hermes's anchor index with `vcc/anchors.py`, which is checked against Hermes's own builder and switches itself off on any mismatch |
 
-The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens`. Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults (`threshold`, `protect_last_n`, `target_ratio` and the rest; see `vcc/engine.py:_compressor_kwargs`).
+The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens`. Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults (`threshold`, `protect_last_n`, `target_ratio`, the `proactive_prune_*` keys and the rest; see `vcc/engine.py:_compressor_kwargs`).
+
+If a memory provider plugin gives Hermes text to preserve at compaction time (`on_pre_compress`), the summary keeps it in a `## Memory Provider Context` section. It is treated as data, capped like `## Earlier Summary`, and carried into later summaries until the provider sends new text.
 
 ## Security and privacy
 
@@ -251,7 +253,7 @@ To benchmark another context engine with the same harness, set `VCC_OTHER=<path 
 ```bash
 git clone https://github.com/danbiocchi/hermes-vcc-engine && cd hermes-vcc-engine
 uv venv --python 3.14 && uv pip install pytest
-.venv/bin/python -m pytest tests -q    # 91 tests; CI runs Python 3.11 to 3.14
+.venv/bin/python -m pytest tests -q    # 101 tests; CI runs Python 3.11 to 3.14
 ```
 
 The projector tests run anywhere. The engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They:
@@ -260,7 +262,7 @@ The projector tests run anywhere. The engine and anchor tests need a Hermes chec
 - compare the fast anchor index against Hermes's own
 - load the plugin through Hermes's loader in a sandboxed `HERMES_HOME`
 
-`hermes plugins validate . --install-deps` passes on this repository. Version history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
+`hermes plugins validate . --install-deps` passes on this repository. Version history is in [docs/CHANGELOG.md](docs/CHANGELOG.md); known problems and planned work are in [docs/BACKLOG.md](docs/BACKLOG.md).
 
 ## Research background
 

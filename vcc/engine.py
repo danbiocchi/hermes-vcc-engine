@@ -92,6 +92,22 @@ def _num(value: Any, default: float, lo: float, hi: float) -> float:
     return min(hi, max(lo, number))
 
 
+def _int(value: Any, default: int, lo: int, hi: int = 1_000_000_000) -> int:
+    """Hermes's strict integer parsing (bool and fractional floats fall back), then clamped."""
+    if isinstance(value, bool):
+        number = default
+    elif isinstance(value, int):
+        number = value
+    elif isinstance(value, float):
+        number = int(value) if value.is_integer() else default
+    else:
+        try:
+            number = int(str(value).strip())
+        except (TypeError, ValueError):
+            number = default
+    return min(hi, max(lo, number))
+
+
 def _compressor_kwargs(cfg: Mapping[str, Any]) -> dict[str, Any]:
     """Map ``compression:`` to ContextCompressor kwargs.
 
@@ -120,6 +136,10 @@ def _compressor_kwargs(cfg: Mapping[str, Any]) -> dict[str, Any]:
         "threshold_tokens_cap": cap,
         "min_tail_user_messages": int(_num(comp.get("min_tail_user_messages", 1), 1, 1, 20)),
         "tail_mode": str(comp.get("tail_mode", "lean")).strip().lower() or "lean",
+        # Opt-in proactive tool-result pruning (0 = off), same keys and floors as Hermes.
+        "proactive_prune_tokens": _int(comp.get("proactive_prune_tokens", 0), 0, 0),
+        "proactive_prune_min_result_chars": _int(comp.get("proactive_prune_min_result_chars", 8000), 8000, 200),
+        "proactive_prune_min_reclaim_tokens": _int(comp.get("proactive_prune_min_reclaim_tokens", 4096), 4096, 0),
     }
 
 
@@ -279,6 +299,7 @@ class VccEngine(ContextCompressor):
                 previous=cc._redact_compaction_text(previous) if previous else None,
                 is_real_user=self._vcc_is_real_user,
                 focus=focus_topic,
+                memory_context=memory_context,
             )
             if not has_user_turn:
                 body = _force_no_user_task(body)

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.2
+
+Fixes for the problems found in a public review of 0.4.1 and two found while checking them (`docs/BACKLOG.md`, items 1 to 5, 8 and 9). The summary text changes, so the benchmark golden was rewritten.
+
+- **A failure fixed after a compaction leaves Blocked.** Before, a call that failed before one compaction and succeeded after it stayed in Blocked, while Commands Run said it had succeeded. Inherited Blocked entries now parse back to the same `tool:target` key, and a later success of that call moves the entry to Errors & Fixes as `… → fixed at [#N]`. A repeat failure replaces the inherited entry instead of adding a second one.
+- **A failed file action is no longer listed as done.** File verbs used to be recorded when the call was made, so a `write_file` that hit a permission error was listed as `written (created or overwritten)`. The verb is now recorded when the result arrives. A failure reads `write failed (not written)`, `read failed`, `patch failed (not modified)` and so on, and a later success on the same file replaces it.
+- **Successful MCP results keep their payload.** `{"result": …}` and `structuredContent` now reach the log line, so ticket ids and query results are no longer lost behind `ok`. Core tools that return only a one-line `message` (`memory`, for example) keep it too. A JSON error is quoted once instead of twice.
+- **Memory provider context is kept.** The `memory_context` Hermes passes from a memory provider's `on_pre_compress` used to be dropped. It now gets a `## Memory Provider Context` section. The section is treated as data, capped like `## Earlier Summary`, and carried into later summaries until the provider sends new text.
+- **`compression.proactive_prune_*` settings reach the engine**, with the same parsing and floors as Hermes. Before, they stayed at the defaults (off) with `context.engine: vcc`.
+- **Web, browser and MCP results are classified by their content.** Hermes wraps the results of these tools in an `<untrusted_tool_result>` envelope with a fixed preamble. Because the text then no longer started with `{`, the JSON inside was never read: the outcome came from keyword matching, and every log line quoted Hermes's preamble instead of the result. On the bench corpus, 4 of 163 wrapped results were marked failed although they reported `"success": true`, and 8 failures were marked ok. The envelope is now removed before the result is classified, so all 163 match their own success flag, and the MCP fix above also works in real sessions.
+- **The budget fit no longer overshoots by its own note.** Dropping log lines adds a "… N line(s) omitted" note, which wasn't counted. The summary could end up a few characters over budget, so every kept line got shortened, or the middle of the summary was cut off. On 22 real compaction windows, the cut-off happened on 4 and now on none, and kept lines are shortened on 2 instead of 6.
+- Chat-template markers are now also neutralized in inherited and memory-provider text (`_sanitize_block`).
+- `bench/proofs.py` on the bench corpus: 821 / 821 log lines verified (0.4.1: 783 / 783), 11 / 11 planted fabrications caught, 467 / 467 `[#N]` links in stored summaries opened the right message. Commands retained in the summary: 526 / 890 (0.4.1: 512); user requests: 166 / 216 (0.4.1: 161).
+- Tested against Hermes v0.21.7, v0.22.2 and v0.22.4: all 101 tests pass on each.
+
 ## 0.4.1
 
 A tidier repository. The summary output and the engine's behavior are unchanged.

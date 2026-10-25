@@ -3,7 +3,7 @@
 Enable with ``context.engine: vcc`` in config.yaml. See README.md.
 """
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 
 def register(ctx) -> None:
