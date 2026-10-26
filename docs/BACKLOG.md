@@ -12,13 +12,13 @@ and to Hermes `v0.22.2`.
 | 3 | Successful MCP results lose their payload | bug | high for MCP users | fixed in 0.4.2 |
 | 4 | `memory_context` is accepted but ignored | gap | medium | fixed in 0.4.2 |
 | 5 | `compression.proactive_prune_*` settings don't reach the engine | gap | low | fixed in 0.4.2 |
-| 6 | `max_tokens` never reaches a plugin engine | gap (Hermes-wide) | low until seen live | open |
-| 7 | Task-continuation benchmark | evaluation | medium | open |
+| 6 | `max_tokens` never reaches a plugin engine | gap (Hermes-wide) | low until seen live | fixed in 0.4.2 |
+| 7 | Task-continuation benchmark | evaluation | medium | built; first run done |
 | 8 | Web, browser and MCP results are classified by Hermes's envelope, not their content | bug | high | fixed in 0.4.2 |
 | 9 | The budget fit overshoots by its own "lines omitted" note | bug | medium | fixed in 0.4.2 |
-| 10 | JSON results without an `output` string get no excerpt | gap | medium | open |
+| 10 | JSON results without an `output` string get no excerpt | gap | medium | tested, not kept |
 
-Items 1 to 5, 8 and 9 are fixed in 0.4.2 (see `docs/CHANGELOG.md`). Their sections below describe the
+Items 1 to 6, 8 and 9 are fixed in 0.4.2 (see `docs/CHANGELOG.md`). Their sections below describe the
 problem as it was in 0.4.1 and are kept as the record of how each one was confirmed.
 
 ## 1. A blocker fixed after a compaction stays in Blocked
@@ -156,8 +156,13 @@ before compaction fired". No `config.yaml` key that sets `agent.max_tokens` for 
 OpenAI-compatible local setups are probably unaffected; on the author's machine the trigger is
 73,728 = 98,304 × 0.75 under both engines.
 
-**Next step.** This affects every plugin context engine, so an upstream Hermes issue (pass
-`max_tokens` in `update_model`) is the right fix. Revisit here only if a live case turns up.
+**Fix (0.4.2).** On its first `update_model` call, when Hermes passes no `max_tokens`, the engine
+asks Hermes's own `_compressor_max_tokens` for the reservation the stock compressor would get with
+that provider and base URL, and passes it on. An engine test builds a stock `ContextCompressor` the
+way Hermes does and checks that both triggers match (native Gemini, a Gemini base URL, a local
+server), that the first runtime sticks, and that an explicit `max_tokens` wins. Upstream, the
+general fix is open as Hermes PR #115522 (issue #115517, closed); once it lands, Hermes passes the
+value and the engine leaves it alone.
 
 ## 7. Task-continuation benchmark
 
@@ -171,6 +176,35 @@ instruction and an error that gets resolved, scoring: task completed, commands r
 already passed, the latest instruction followed, and the resolved error not re-reported. Compare
 stock and vcc on the same seeds. Needs GPU time (each compaction window is about 10 minutes on the
 author's GTX 1080 + 1070).
+
+**Built (0.4.2): `bench/continuation.py`.** Three generated variants of a small Python project, each
+with a slow `setup.sh` the user says to run exactly once, a planted bug (`ImportError`, `KeyError` or
+`ValueError`) that fails the tests until fixed, and six 340-line logs. Four user turns: fix the tests;
+count stockouts in three logs with `read_file` and write `report.txt`; change of plan, `report.json`
+over all six logs and delete `report.txt`; finish and name any unresolved error. The real Hermes CLI
+runs each turn inside `bwrap` with `compression.threshold_tokens: 16000`, so the logs push it through
+several compactions. Scored by rule from the task folder and the session's `state.db`. Two things
+found while building it: in Hermes v0.22 chat attaches to the gateway that owns its home, and a
+running gateway serves every named profile, so the bench uses its own home outside
+`~/.hermes/profiles`; and since v0.22 a compaction rewrites the session in place instead of starting
+a child session, so compactions are counted by re-inserted `message_uid`s.
+
+**First run (2026-10-26, local 27B, variants 0 and 1, one run each):**
+
+| | stock | vcc |
+|---|---|---|
+| Tests pass | 2 / 2 | 2 / 2 |
+| `report.json` exactly right | 0 / 2 | 1 / 2 |
+| Latest instruction followed (`report.json`, `report.txt` deleted) | 2 / 2 | 2 / 2 |
+| `setup.sh` runs | 1, 1 | 1, 1 |
+| Passed commands re-run after a compaction | 0 | 0 |
+| Fixed error reported as unresolved | 0 / 2 | 0 / 2 |
+| Compactions | 3, 1 | 2, 3 |
+| Wall time (mean) | 27 min | 34 min |
+
+No continuation failure in either engine. The report scores come from the model counting about
+2,000 log lines by eye, so they say little about the engine. Variant 2 and repeats were not run
+(about 30 minutes per run). More runs would be needed to rank the engines.
 
 ## 8. Web, browser and MCP results are classified by Hermes's envelope, not their content
 
@@ -212,6 +246,24 @@ results), `patch` (`diff`, 130), `write_file` (`bytes_written`, 111), `skill_man
 `Limits.result_chars`) or a short per-tool list of the useful key. Either changes hundreds of log
 lines and takes budget from other lines, so it needs a head-to-head run (`bench/certainty.py`) to
 show the extra text helps recall rather than crowding out other lines.
+
+**Tested, not kept (2026-10-25).** The generic fallback (plus a `clarify` rule that puts the user's
+answer first) changed 21 of 72 summaries on the frozen windows (42 at 64K, 30 at 96K). Because the
+existing question sets never ask what a result said, `bench/payload.py` adds questions that only a
+result can answer: a search's `total_count`, a file's `total_lines`, a site a web search returned,
+and the user's answer to `clarify`, each graded by rule and asked in two wordings. With the local
+27B on the same 72 windows:
+
+| Questions | 0.4.2 | with the fallback | only one got right |
+|---|---|---|---|
+| About result payloads | 6 / 52 | 8 / 52 | fallback 2, 0.4.2 0 |
+| All others | 1,943 / 2,340 | 1,936 / 2,340 | fallback 9, 0.4.2 16 |
+| All | 1,949 / 2,392 (81.5%) | 1,944 / 2,392 (81.3%) | fallback 11, 0.4.2 16 |
+
+The paired difference is −0.2 points (95% CI [−0.7, 0.3]); neither slice's difference is
+significant (McNemar p = 0.50 and 0.23). Most payload questions fail with or without the fallback.
+The `[#N]` link still reaches the full result. Revisit only with a per-tool rule that puts the one
+useful field first, and measure it the same way.
 
 ## Review points that need no change
 

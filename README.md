@@ -209,7 +209,9 @@ What the plugin's runtime code (`__init__.py` and the `vcc/` folder) does and do
   - On 2 of 71 benchmark windows with no user-written messages, Hermes's own provenance check rejected the summary and the pass fell back.
 - **Hermes internals:** the engine uses private `ContextCompressor` methods (`_generate_summary`, `_augment_summary_lean`, `_ground_historical_task_snapshot` and others) and private helpers in `agent.conversation_compression` and `agent.auxiliary_client`. These aren't a documented plugin API and can change in a Hermes update. That is why the startup check and fallback exist.
 
-The `bench/` scripts are separate and never loaded by Hermes. When you run them by hand, they read `~/.hermes/state.db` read-only, call your local model server, and write results to `~/.cache/hermes-vcc-engine/` at mode 0600. They print only counts, scores, ids and hashes.
+The `bench/` scripts are separate and never loaded by Hermes. When you run them by hand, they read `~/.hermes/state.db` read-only, call your local model server, and write results to `~/.cache/hermes-vcc-engine/` at mode 0600. They print only counts, scores, ids and hashes. Before each model call, the GPU benchmarks check that nobody else is using the server (`bench/idle.py` reads the WebUI's `/health`, the router's `/models` and `/slots`, and the `llama-server` journal), and they never load or swap a model.
+
+`bench/continuation.py` is different: it runs a real Hermes agent, with shell and file tools, on a generated coding task. The agent runs inside `bwrap` with the whole filesystem read-only except the task folder (`~/vcc-bench-tasks`), its own Hermes home (`~/vcc-bench-home`, outside your profiles so your running gateway never serves it) and Hermes's runtime lock files. Its model calls go through a proxy on `127.0.0.1:18080`. Both folders are recreated for every run and deleted at the end.
 
 ## Limitations
 
@@ -244,7 +246,13 @@ $PY -I bench/certainty.py compact STOCK           # stock summaries on your mode
 $PY -I bench/certainty.py compact v0.4            # this checkout
 $PY -I bench/certainty.py ask v0.4 STOCK FULL     # ask the questions under each context
 $PY -I bench/certainty.py report                  # scores and paired statistics
+
+# An agent continuing a coding task through several compactions (needs bwrap and the local model server)
+$PY -I bench/continuation.py run --arms vcc,stock  # 3 task variants per arm; resumable
+$PY -I bench/continuation.py report
 ```
+
+The GPU benchmarks use `VCC_BENCH_MODEL` (default: Hermes's `model.default`), wait until that model is loaded (they never load it themselves), and pause while anyone else is using the server.
 
 To benchmark another context engine with the same harness, set `VCC_OTHER=<path to its package>`. The older round-1 harness, `bench/headtohead.py`, is still included.
 
@@ -253,7 +261,7 @@ To benchmark another context engine with the same harness, set `VCC_OTHER=<path 
 ```bash
 git clone https://github.com/danbiocchi/hermes-vcc-engine && cd hermes-vcc-engine
 uv venv --python 3.14 && uv pip install pytest
-.venv/bin/python -m pytest tests -q    # 101 tests; CI runs Python 3.11 to 3.14
+.venv/bin/python -m pytest tests -q    # 105 tests; CI runs Python 3.11 to 3.14
 ```
 
 The projector tests run anywhere. The engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They:

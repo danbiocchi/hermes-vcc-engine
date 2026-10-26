@@ -156,6 +156,18 @@ def _engine_options(cfg: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _implied_max_tokens(provider: Any, base_url: Any) -> Optional[int]:
+    """The output reservation Hermes gives its own compressor when the agent sets none."""
+    try:
+        from types import SimpleNamespace
+
+        from agent.agent_init import _compressor_max_tokens
+
+        return _compressor_max_tokens(SimpleNamespace(max_tokens=None, provider=provider, base_url=base_url))
+    except Exception:  # an older or newer Hermes without the helper: no reservation, as before
+        return None
+
+
 def _missing_seams() -> list[str]:
     import agent.context_compressor as cc
     missing = [m for m in _REQUIRED_METHODS if not callable(getattr(ContextCompressor, m, None))]
@@ -182,6 +194,7 @@ class VccEngine(ContextCompressor):
         self._vcc_last_ms: Optional[float] = None
         self._vcc_runs = 0
         self._vcc_fallbacks = 0
+        self._vcc_models_seen = 0
         missing = _missing_seams()
         self._vcc_passthrough = bool(missing)
         if missing:
@@ -207,6 +220,21 @@ class VccEngine(ContextCompressor):
     def clone_for_agent(self) -> "VccEngine":
         # A fresh instance per agent: no shared mutable state, nothing deepcopy could trip on.
         return type(self)(config=self._vcc_config, **self._vcc_overrides)
+
+    def update_model(self, model: str, context_length: int, *args: Any, **kwargs: Any) -> None:
+        # Hermes builds its own compressor with max_tokens=_compressor_max_tokens(agent) but
+        # configures a plugin engine through update_model() without it, so the trigger ignored the
+        # output reservation. The agent isn't visible here, so apply the part of that rule that
+        # update_model's own arguments decide (native Gemini reserves 65,535 output tokens), once,
+        # when the stock compressor fixes its reservation too: at the first call.
+        if not self._vcc_models_seen and self.max_tokens is None and kwargs.get("max_tokens") is None:
+            names = ("base_url", "api_key", "provider", "api_mode")
+            given = dict(zip(names, args)) | {k: kwargs[k] for k in names if k in kwargs}
+            implied = _implied_max_tokens(given.get("provider", ""), given.get("base_url", ""))
+            if implied is not None:
+                kwargs["max_tokens"] = implied
+        self._vcc_models_seen += 1
+        super().update_model(model, context_length, *args, **kwargs)
 
     def get_status(self) -> dict[str, Any]:
         status = super().get_status()

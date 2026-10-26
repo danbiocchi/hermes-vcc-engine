@@ -10,7 +10,7 @@ All Hermes references are to `~/.hermes/hermes-agent/agent/context_compressor.py
 
 ### When it fires
 
-Hermes counts the tokens in the prompt it is about to send. Once that passes a threshold it calls `ContextCompressor.compress()`. By default the threshold is 75% of the usable input window: `_compute_threshold_tokens` takes `(context_length - max_tokens) * threshold_percent`, and `_effective_threshold_percent` raises `threshold_percent` to at least 0.75 for windows under 512K. On a 98,304-token window, the setup the benchmarks use (`bench/headtohead.py`, `CTX`), compaction fires at roughly 73.7k tokens.
+Hermes counts the tokens in the prompt it is about to send. Once that passes a threshold it calls `ContextCompressor.compress()`. By default the threshold is 75% of the usable input window: `_compute_threshold_tokens` takes `(context_length - max_tokens) * threshold_percent`, and `_effective_threshold_percent` raises `threshold_percent` to at least 0.75 for windows under 512K. On a 98,304-token window, the setup the benchmarks use (`bench/headtohead.py`, `CTX`), compaction fires at roughly 73.7k tokens. `max_tokens` is the output reservation Hermes gives its own compressor (`_compressor_max_tokens`: 65,535 for native Gemini, none for a local OpenAI-compatible server). Hermes doesn't pass it to a plugin engine, so vcc asks for the same value on its first `update_model` call (`vcc/engine.py:VccEngine.update_model`) and the trigger matches the stock compressor's.
 
 ### What the stock path does
 
@@ -344,7 +344,7 @@ These sections come from Hermes, and the stock path adds them too. (The anchor i
 
 ### Unit and integration tests
 
-`pytest -q` runs 101 tests (`tests/`). Projector tests need nothing else. Engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`) and skip without one. They replace `call_llm` with a function that fails the test if called (`tests/test_engine.py:no_llm`), run full `compress()` passes, compare `anchors.build` against Hermes's builder, and load the plugin through Hermes's loader. `HERMES_HOME` is redirected to a temporary directory (`tests/conftest.py`).
+`pytest -q` runs 105 tests (`tests/`). Projector tests need nothing else. Engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`) and skip without one. They replace `call_llm` with a function that fails the test if called (`tests/test_engine.py:no_llm`), run full `compress()` passes, compare `anchors.build` against Hermes's builder, and load the plugin through Hermes's loader. `HERMES_HOME` is redirected to a temporary directory (`tests/conftest.py`).
 
 ### Proofs (`bench/proofs.py`)
 

@@ -194,6 +194,34 @@ def test_summariser_window_never_caps_the_trigger():
     assert eng.threshold_tokens == int(98_304 * 0.75)
 
 
+def test_output_reservation_matches_the_stock_compressor(cc):
+    from types import SimpleNamespace
+
+    import engine
+
+    from agent.agent_init import _compressor_max_tokens
+
+    for provider, base_url in (("gemini", ""), ("custom", "https://generativelanguage.googleapis.com/v1beta"),
+                               ("custom", "http://127.0.0.1:8080/v1")):
+        agent = SimpleNamespace(max_tokens=None, provider=provider, base_url=base_url)
+        stock = cc.ContextCompressor(model="m", config_context_length=1_048_576, quiet_mode=True,
+                                     max_tokens=_compressor_max_tokens(agent), **engine._compressor_kwargs({}))
+        stock.update_model(model="m", context_length=1_048_576, base_url=base_url, provider=provider)
+        eng = make_engine(config_context_length=1_048_576)
+        eng.update_model(model="m", context_length=1_048_576, base_url=base_url, provider=provider)
+        assert (eng.max_tokens, eng.threshold_tokens) == (stock.max_tokens, stock.threshold_tokens), provider
+    assert eng.max_tokens is None  # a local server reserves nothing
+    # like the stock compressor, the reservation is fixed by the first runtime, not by later switches
+    gem = make_engine(config_context_length=1_048_576)
+    gem.update_model("gemini-3-pro", 1_048_576, "", "", "gemini")
+    assert gem.max_tokens == 65_535
+    gem.update_model(model="local/qwen", context_length=98_304, provider="custom")
+    assert gem.max_tokens == 65_535
+    explicit = make_engine()
+    explicit.update_model(model="m", context_length=1_048_576, provider="gemini", max_tokens=8192)
+    assert explicit.max_tokens == 8192
+
+
 @pytest.mark.parametrize("junk", [None, "abc", -5, float("nan"), {"x": 1}, []])
 def test_config_junk_falls_back_to_defaults(junk):
     import engine

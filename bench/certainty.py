@@ -29,7 +29,7 @@ BENCH = Path(__file__).resolve().parent
 REPO = Path(os.environ.get("VCC_REPO", str(BENCH.parent))).resolve()
 HERMES = Path(os.environ.get("HERMES_AGENT_DIR", str(Path.home() / ".hermes" / "hermes-agent")))
 BASE_URL = os.environ.get("VCC_BASE_URL", "http://localhost:8080/v1")
-HERE = Path.home() / ".cache" / "hermes-vcc-engine" / "certainty"
+HERE = Path(os.environ.get("VCC_CERTAINTY_DIR", str(Path.home() / ".cache" / "hermes-vcc-engine" / "certainty")))
 HERE.mkdir(mode=0o700, parents=True, exist_ok=True)
 SYSTEM = {"role": "system", "content": "You are Hermes."}
 DEV_SESSIONS_FILE = Path.home() / ".cache" / "hermes-vcc-engine" / "headtohead" / "events.json"
@@ -39,7 +39,7 @@ RULE = ("Answer from this conversation only. If it does not tell you, reply UNKN
 sys.path.insert(0, str(HERMES)); import hermes_bootstrap  # noqa: E402,F401
 sys.path.insert(0, str(REPO / "vcc" if (REPO / "vcc" / "engine.py").is_file() else REPO)); sys.path.append(str(BENCH))
 os.chdir(Path.home())
-import engine, projector, accuracy, questions  # noqa: E402
+import engine, projector, accuracy, questions, payload, idle  # noqa: E402
 from agent.model_metadata import estimate_messages_tokens_rough as est_msgs, estimate_tokens_rough as est  # noqa: E402
 from agent.agent_runtime_helpers import repair_message_sequence, sanitize_api_messages  # noqa: E402
 
@@ -55,8 +55,14 @@ def save(name, obj):
     tmp.write_text(json.dumps(obj)); os.chmod(tmp, 0o600); tmp.replace(p)
 
 
+GATE = None
+
+
 def model_id():
-    return json.load(urllib.request.urlopen(BASE_URL + "/models"))["data"][0]["id"]
+    """The benchmark's model (bench/idle.py): never one the router would have to load."""
+    global GATE
+    GATE = GATE or idle.Gate()
+    return GATE.model
 
 
 def _other_engine_class():
@@ -153,6 +159,7 @@ def freeze(ctxs):
                 qs = [{**p, "src": "gen", "family": p["grade"] + ("-no" if p.get("expect") == "no" else "")}
                       for p in accuracy.make_probes(projector, turns) if p["grade"] != "keywords"]
                 qs += [{**q, "src": "ind"} for q in questions.make_questions(turns, seed=wi)]
+                qs += [{**q, "src": "pay"} for q in payload.make_probes(turns)]
                 events.append({"id": label, "sid": sid, "ctx": ctx, "convo": convo, "n_turns": len(turns),
                                "questions": qs, "tokens_before": est_msgs(convo),
                                "threshold": eng0.threshold_tokens, "held_out": sid not in dev})
@@ -179,6 +186,9 @@ def compact(name):
             eng, cap = make_engine(e["sid"], e["ctx"], stock=stock, model=model)
             t = time.perf_counter()
             try:
+                if stock:  # the stock summary is a model call too
+                    GATE.wait()
+                    GATE.sent()
                 after = eng.compress(json.loads(json.dumps(e["convo"])), force=True)
             except Exception as exc:
                 after, err = None, f"{type(exc).__name__}"
@@ -214,6 +224,9 @@ def chat(model, msgs, max_tokens, cache=True):
     for attempt in range(3):
         try:
             t = time.perf_counter()
+            model_id()
+            GATE.wait()  # every request waits until nobody else is using the local model
+            GATE.sent()
             d = json.load(urllib.request.urlopen(req, timeout=3600))
             msg = d["choices"][0]["message"]
             return (msg.get("content") or "") + " " + (msg.get("reasoning_content") or ""), \
@@ -292,6 +305,8 @@ def paraphrase(q):
     """Second wording, fixed before any results (headtohead.py's for the generator's questions)."""
     if q["src"] == "ind":
         return questions.paraphrase(q)
+    if q["src"] == "pay":
+        return payload.paraphrase(q)
     text, g = q["q"], q["grade"]
     m = re.search(r"`([^`]+)`", text)
     term = m.group(1) if m else ""
@@ -308,6 +323,8 @@ def paraphrase(q):
 
 
 def grade(q, a):
+    if q["src"] == "pay":
+        return payload.grade(q, a)
     return questions.grade(q, a) if q["src"] == "ind" else accuracy.grade(q, a)
 
 
@@ -341,6 +358,8 @@ def report():
         "dev": lambda e, q: not e["held_out"],
         "independent-qs": lambda e, q: q["src"] == "ind",
         "generator-qs": lambda e, q: q["src"] == "gen",
+        "payload-qs": lambda e, q: q["src"] == "pay",
+        "without-payload-qs": lambda e, q: q["src"] != "pay",
     }
     res = {"accuracy": {}, "families": {}, "pairs": {}, "timing": {}, "identity": {}}
     for sname, keep in slices.items():
@@ -354,7 +373,7 @@ def report():
             res["families"][f"{src}:{fam}|{c}"] = [sum(x[3] for x in r), len(r)]
 
     rng = random.Random(0)
-    for sname in ("all", "held-out", "independent-qs"):
+    for sname in ("all", "held-out", "independent-qs", "payload-qs", "without-payload-qs"):
         keep = slices[sname]
         for ai, a in enumerate(conds):
             for b in conds[ai + 1:]:
