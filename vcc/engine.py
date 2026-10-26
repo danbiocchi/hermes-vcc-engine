@@ -50,6 +50,7 @@ _DEFAULTS: dict[str, Any] = {
     "max_budget_tokens": 8000,
     "fallback_to_llm": True,     # on an unexpected projection error, use the stock summary
     "fast_anchors": True,        # build Hermes's anchor index with anchors.py (same output, faster)
+    "only_local_models": False,  # project only when the chat model is local; else the stock LLM summary
 }
 _CHARS_PER_TOKEN = 4  # same rough ratio Hermes's own estimator uses
 
@@ -153,7 +154,17 @@ def _engine_options(cfg: Mapping[str, Any]) -> dict[str, Any]:
                                       _DEFAULTS["max_budget_tokens"], 500, 100_000)),
         "fallback_to_llm": bool(raw.get("fallback_to_llm", _DEFAULTS["fallback_to_llm"])),
         "fast_anchors": bool(raw.get("fast_anchors", _DEFAULTS["fast_anchors"])),
+        "only_local_models": bool(raw.get("only_local_models", _DEFAULTS["only_local_models"])),
     }
+
+
+def _is_local_endpoint(base_url: Any) -> bool:
+    """Hermes's own rule: loopback, LAN, link-local, ``.local`` and Tailscale hosts are local."""
+    try:
+        from agent.model_metadata import is_local_endpoint
+    except Exception:  # a Hermes without the helper: keep projecting, as without the option
+        return True
+    return bool(is_local_endpoint(str(base_url or "")))
 
 
 def _implied_max_tokens(provider: Any, base_url: Any) -> Optional[int]:
@@ -194,6 +205,7 @@ class VccEngine(ContextCompressor):
         self._vcc_last_ms: Optional[float] = None
         self._vcc_runs = 0
         self._vcc_fallbacks = 0
+        self._vcc_remote_passes = 0
         self._vcc_models_seen = 0
         missing = _missing_seams()
         self._vcc_passthrough = bool(missing)
@@ -207,15 +219,23 @@ class VccEngine(ContextCompressor):
     def name(self) -> str:
         return ENGINE_NAME
 
-    # The summariser model never runs on this engine's normal path, so its context window
-    # must not cap our trigger (the session-start feasibility probe installs it).
+    # The summariser model never runs while this engine projects, so its context window must
+    # not cap our trigger (the session-start feasibility probe installs it). When a remote chat
+    # model hands the summary back to Hermes (only_local_models), the stock rule applies again.
     @property
     def _aux_context_ceiling(self) -> Optional[int]:
-        return None
+        return None if self._vcc_engaged() else getattr(self, "_vcc_aux_ceiling", None)
 
     @_aux_context_ceiling.setter
-    def _aux_context_ceiling(self, _value: Optional[int]) -> None:
-        pass
+    def _aux_context_ceiling(self, value: Optional[int]) -> None:
+        self._vcc_aux_ceiling = value
+
+    def _vcc_engaged(self) -> bool:
+        """Whether this engine writes the summary now, or Hermes's stock LLM summary does."""
+        options = getattr(self, "_vcc_options", None)  # unset while ContextCompressor.__init__ runs
+        if not options or not options["only_local_models"]:
+            return True
+        return _is_local_endpoint(getattr(self, "base_url", ""))
 
     def clone_for_agent(self) -> "VccEngine":
         # A fresh instance per agent: no shared mutable state, nothing deepcopy could trip on.
@@ -242,6 +262,8 @@ class VccEngine(ContextCompressor):
             "vcc_passthrough": self._vcc_passthrough,
             "vcc_runs": self._vcc_runs,
             "vcc_fallbacks": self._vcc_fallbacks,
+            "vcc_remote_passes": self._vcc_remote_passes,
+            "vcc_engaged": self._vcc_engaged() and not self._vcc_passthrough,
             "vcc_last_ms": self._vcc_last_ms,
             "vcc_fast_anchors": (
                 "off (config)" if not self._vcc_options["fast_anchors"]
@@ -301,6 +323,11 @@ class VccEngine(ContextCompressor):
         bypass_cooldown: bool = False,
     ) -> Optional[str]:
         if self._vcc_passthrough:
+            return super()._generate_summary(turns_to_summarize, focus_topic, memory_context, bypass_cooldown)
+        if not self._vcc_engaged():
+            self._vcc_remote_passes += 1
+            logger.info("vcc: the chat model (%s) is not local; using the stock LLM summary "
+                        "(context.vcc.only_local_models)", getattr(self, "provider", "") or "unknown provider")
             return super()._generate_summary(turns_to_summarize, focus_topic, memory_context, bypass_cooldown)
 
         import agent.context_compressor as cc

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3
+
+- **New option `context.vcc.only_local_models`** (default `false`, so nothing changes unless you set it). When it is on, the engine writes the summary only while the chat model runs locally: loopback, LAN, link-local, `.local` or Tailscale, judged by Hermes's own `is_local_endpoint`. With a hosted model, that compaction uses Hermes's stock LLM summary, and the summariser's context window caps the trigger as it does for the built-in compressor. The check runs at every compaction, so it follows model switches and fallbacks. The engine status reports `vcc_engaged` and `vcc_remote_passes`.
+- Tested against Hermes v0.21.7, v0.22.2 and v0.22.4: all 114 tests pass on each.
+
 ## 0.4.2
 
 Fixes for the problems found in a public review of 0.4.1 and the ones found while checking them (`docs/BACKLOG.md`, items 1 to 6, 8 and 9). The summary text changes, so the benchmark golden was rewritten.

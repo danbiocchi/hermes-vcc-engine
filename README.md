@@ -184,8 +184,11 @@ Everything is optional, set under `context.vcc` in `config.yaml`. Out-of-range v
 | `max_budget_tokens` | `8000` | 500–100,000 | Largest summary budget |
 | `fallback_to_llm` | `true` | bool | If the summary raises an error, use Hermes's stock LLM summary for that pass |
 | `fast_anchors` | `true` | bool | Build Hermes's anchor index with `vcc/anchors.py`, which is checked against Hermes's own builder and switches itself off on any mismatch |
+| `only_local_models` | `false` | bool | Write the summary only while the chat model runs locally. With a hosted model, Hermes's stock LLM summary runs instead |
 
 The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens`. Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults (`threshold`, `protect_last_n`, `target_ratio`, the `proactive_prune_*` keys and the rest; see `vcc/engine.py:_compressor_kwargs`).
+
+With `only_local_models: true`, the engine checks the chat model's endpoint at every compaction, using Hermes's own `is_local_endpoint`. Loopback, LAN, link-local, `.local` and Tailscale addresses count as local. A local model gets the instant summary, with no LLM call. A hosted model (Anthropic, OpenRouter and so on) gets Hermes's stock summary, written by the model Hermes uses for summaries, and the summariser's context window caps the trigger, as with the built-in compressor. The check follows model switches and fallbacks within a session, and `vcc_engaged` and `vcc_remote_passes` in the engine status show which path ran.
 
 If a memory provider plugin gives Hermes text to preserve at compaction time (`on_pre_compress`), the summary keeps it in a `## Memory Provider Context` section. It is treated as data, capped like `## Earlier Summary`, and carried into later summaries until the provider sends new text.
 
@@ -261,7 +264,7 @@ To benchmark another context engine with the same harness, set `VCC_OTHER=<path 
 ```bash
 git clone https://github.com/danbiocchi/hermes-vcc-engine && cd hermes-vcc-engine
 uv venv --python 3.14 && uv pip install pytest
-.venv/bin/python -m pytest tests -q    # 105 tests; CI runs Python 3.11 to 3.14
+.venv/bin/python -m pytest tests -q    # 114 tests; CI runs Python 3.11 to 3.14
 ```
 
 The projector tests run anywhere. The engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They:

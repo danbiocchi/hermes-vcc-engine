@@ -1,5 +1,5 @@
 name: hermes-vcc-engine
-version: 0.4.2
+version: 0.4.3
 description: "Instant context compaction for Hermes Agent: builds the summary in milliseconds with no LLM call, keeping exact commands, exit codes, errors and files, each linked to its original message."
 author: danbiocchi
 license: Apache-2.0

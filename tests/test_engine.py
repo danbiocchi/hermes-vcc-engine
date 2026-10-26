@@ -162,6 +162,58 @@ def test_missing_seam_switches_to_passthrough(monkeypatch, cc):
     assert requests
 
 
+LOCAL_ONLY = {"context": {"vcc": {"only_local_models": True}}}
+
+
+@pytest.mark.parametrize("base_url", ["http://127.0.0.1:8080/v1", "http://localhost:11434/v1",
+                                      "http://192.168.2.192:8080/v1", "http://100.66.174.104:8080/v1"])
+def test_only_local_models_projects_for_a_local_model(no_llm, base_url):
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="qwen", context_length=100_000, base_url=base_url, provider="custom")
+    out = eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert "## Detailed Session Log" in summary_of(eng, out)
+    assert (eng._vcc_runs, eng._vcc_remote_passes, no_llm) == (1, 0, [])
+
+
+@pytest.mark.parametrize("base_url,provider", [("https://api.anthropic.com", "anthropic"),
+                                               ("https://openrouter.ai/api/v1", "openrouter"), ("", "anthropic")])
+def test_only_local_models_hands_a_remote_model_to_the_stock_summary(monkeypatch, cc, base_url, provider):
+    import engine
+
+    monkeypatch.setattr(engine.projector, "project", lambda *a, **k: pytest.fail("projected for a remote model"))
+    requests = []
+    monkeypatch.setattr(cc, "call_llm", lambda **k: requests.append(k) or
+                        {"choices": [{"message": {"content": "## Goal\nstock"}, "finish_reason": "stop"}]})
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="some-model", context_length=100_000, base_url=base_url, provider=provider)
+    out = eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert requests and "stock" in summary_of(eng, out)
+    assert (eng._vcc_runs, eng._vcc_remote_passes, eng._vcc_fallbacks) == (0, 1, 0)
+    assert eng.get_status()["vcc_engaged"] is False
+
+
+def test_without_the_option_a_remote_model_is_still_projected(no_llm):
+    eng = make_engine()
+    eng.update_model(model="some-model", context_length=100_000, base_url="https://api.anthropic.com",
+                     provider="anthropic")
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert (eng._vcc_runs, eng._vcc_remote_passes) == (1, 0)
+
+
+def test_the_summariser_window_caps_the_trigger_only_when_hermes_summarises():
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="some-model", context_length=98_304, base_url="https://api.anthropic.com",
+                     provider="anthropic")
+    eng._aux_context_ceiling = 8_000  # what the feasibility probe would install
+    eng.update_model(model="some-model", context_length=98_304, base_url="https://api.anthropic.com",
+                     provider="anthropic")
+    assert eng.threshold_tokens == 8_000
+    eng.update_model(model="qwen", context_length=98_304, base_url="http://127.0.0.1:8080/v1", provider="custom")
+    eng._aux_context_ceiling = 8_000
+    eng.update_model(model="qwen", context_length=98_304, base_url="http://127.0.0.1:8080/v1", provider="custom")
+    assert eng.threshold_tokens == int(98_304 * 0.75)
+
+
 # ----------------------------------------------------------------------------- config & trigger
 
 def test_trigger_defaults_to_75_percent_of_the_window():
