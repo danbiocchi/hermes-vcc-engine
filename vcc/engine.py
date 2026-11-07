@@ -20,10 +20,11 @@ from typing import Any, Mapping, Optional
 from agent.context_compressor import ContextCompressor
 
 try:  # loaded as a package (Hermes plugin loader)
-    from . import anchors, projector
+    from . import anchors, projector, toggle
 except ImportError:  # loaded as a top-level module (tests, tooling)
     import anchors  # type: ignore[no-redef]
     import projector  # type: ignore[no-redef]
+    import toggle  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ _DEFAULTS: dict[str, Any] = {
     "max_budget_tokens": 8000,
     "fallback_to_llm": True,     # on an unexpected projection error, use the stock summary
     "fast_anchors": True,        # build Hermes's anchor index with anchors.py (same output, faster)
-    "only_local_models": False,  # project only when the chat model is local; else the stock LLM summary
+    "only_local_models": False,  # hosted models get the stock LLM summary by default (/vcc switches it)
 }
 _CHARS_PER_TOKEN = 4  # same rough ratio Hermes's own estimator uses
 
@@ -158,13 +159,24 @@ def _engine_options(cfg: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+# Only network endpoints can be local models. Any other scheme is a bridge to a hosted model that
+# merely runs on this machine: process://claude-subscription-... drives the Claude Code CLI, and
+# Hermes's rule would call its dot-less "host" an unqualified LAN name.
+_NETWORK_SCHEMES = ("http", "https", "ws", "wss")
+
+
 def _is_local_endpoint(base_url: Any) -> bool:
-    """Hermes's own rule: loopback, LAN, link-local, ``.local`` and Tailscale hosts are local."""
+    """Hermes's own rule (loopback, LAN, link-local, ``.local`` and Tailscale hosts are local), for
+    network endpoints only."""
+    url = str(base_url or "").strip()
+    scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+    if scheme and scheme not in _NETWORK_SCHEMES:
+        return False
     try:
         from agent.model_metadata import is_local_endpoint
     except Exception:  # a Hermes without the helper: keep projecting, as without the option
         return True
-    return bool(is_local_endpoint(str(base_url or "")))
+    return bool(is_local_endpoint(url))
 
 
 def _implied_max_tokens(provider: Any, base_url: Any) -> Optional[int]:
@@ -231,11 +243,45 @@ class VccEngine(ContextCompressor):
         self._vcc_aux_ceiling = value
 
     def _vcc_engaged(self) -> bool:
-        """Whether this engine writes the summary now, or Hermes's stock LLM summary does."""
+        """Whether this engine writes the summary now, or Hermes's stock LLM summary does.
+
+        A local model always gets vcc. A hosted one gets it when ``/vcc on`` is set, or, without a
+        ``/vcc`` switch, unless ``only_local_models`` is on (see ``toggle.py``)."""
         options = getattr(self, "_vcc_options", None)  # unset while ContextCompressor.__init__ runs
-        if not options or not options["only_local_models"]:
+        if not options:
             return True
-        return _is_local_endpoint(getattr(self, "base_url", ""))
+        return _is_local_endpoint(getattr(self, "base_url", "")) or self._vcc_hosted_on()
+
+    def _vcc_hosted_on(self) -> bool:
+        """Whether hosted models get vcc: the ``/vcc`` switch if set, else not ``only_local_models``."""
+        override = toggle.hosted_override()
+        return (not self._vcc_options["only_local_models"]) if override is None else override
+
+    def _vcc_hosted_source(self) -> str:
+        return "config" if toggle.hosted_override() is None else "/vcc"
+
+    def _vcc_sync_trigger(self) -> None:
+        """Re-derive the trigger when ``/vcc`` flipped who writes the summary since it was computed.
+
+        The summariser's window caps the trigger only while Hermes summarises (``_aux_context_ceiling``),
+        and Hermes applies that cap when it computes the trigger, so a flip mid-session recomputes it the
+        way ``update_model`` does."""
+        engaged = self._vcc_engaged()
+        last = getattr(self, "_vcc_trigger_engaged", None)
+        self._vcc_trigger_engaged = engaged
+        if last is None or last == engaged:
+            return
+        try:
+            self._base_threshold_percent, self.threshold_percent, self.threshold_tokens = self._derive_trigger(
+                self.model, self.context_length, self.provider)
+            self._apply_threshold_tokens_cap()
+            self._tail_token_budget = None  # lean mode recalibrates from the new trigger
+        except Exception as exc:  # an older Hermes: the next update_model() recomputes it
+            logger.debug("vcc: could not recompute the trigger after /vcc (%s)", exc)
+
+    def should_compress_info(self, prompt_tokens: Optional[int] = None) -> tuple[bool, Optional[str]]:
+        self._vcc_sync_trigger()
+        return super().should_compress_info(prompt_tokens)
 
     def clone_for_agent(self) -> "VccEngine":
         # A fresh instance per agent: no shared mutable state, nothing deepcopy could trip on.
@@ -255,6 +301,7 @@ class VccEngine(ContextCompressor):
                 kwargs["max_tokens"] = implied
         self._vcc_models_seen += 1
         super().update_model(model, context_length, *args, **kwargs)
+        self._vcc_trigger_engaged = self._vcc_engaged()  # the mode this trigger was computed for
 
     def get_status(self) -> dict[str, Any]:
         status = super().get_status()
@@ -264,6 +311,9 @@ class VccEngine(ContextCompressor):
             "vcc_fallbacks": self._vcc_fallbacks,
             "vcc_remote_passes": self._vcc_remote_passes,
             "vcc_engaged": self._vcc_engaged() and not self._vcc_passthrough,
+            "vcc_model_local": _is_local_endpoint(getattr(self, "base_url", "")),
+            "vcc_hosted_models": "on" if self._vcc_hosted_on() else "off",
+            "vcc_hosted_source": self._vcc_hosted_source(),
             "vcc_last_ms": self._vcc_last_ms,
             "vcc_fast_anchors": (
                 "off (config)" if not self._vcc_options["fast_anchors"]
@@ -326,8 +376,9 @@ class VccEngine(ContextCompressor):
             return super()._generate_summary(turns_to_summarize, focus_topic, memory_context, bypass_cooldown)
         if not self._vcc_engaged():
             self._vcc_remote_passes += 1
-            logger.info("vcc: the chat model (%s) is not local; using the stock LLM summary "
-                        "(context.vcc.only_local_models)", getattr(self, "provider", "") or "unknown provider")
+            logger.info("vcc: the chat model (%s) is not local; using the stock LLM summary (%s)",
+                        getattr(self, "provider", "") or "unknown provider",
+                        "/vcc off" if self._vcc_hosted_source() == "/vcc" else "context.vcc.only_local_models")
             return super()._generate_summary(turns_to_summarize, focus_topic, memory_context, bypass_cooldown)
 
         import agent.context_compressor as cc

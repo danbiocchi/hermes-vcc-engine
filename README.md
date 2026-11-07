@@ -184,11 +184,24 @@ Everything is optional, set under `context.vcc` in `config.yaml`. Out-of-range v
 | `max_budget_tokens` | `8000` | 500–100,000 | Largest summary budget |
 | `fallback_to_llm` | `true` | bool | If the summary raises an error, use Hermes's stock LLM summary for that pass |
 | `fast_anchors` | `true` | bool | Build Hermes's anchor index with `vcc/anchors.py`, which is checked against Hermes's own builder and switches itself off on any mismatch |
-| `only_local_models` | `false` | bool | Write the summary only while the chat model runs locally. With a hosted model, Hermes's stock LLM summary runs instead |
+| `only_local_models` | `false` | bool | Write the summary only while the chat model runs locally. With a hosted model, Hermes's stock LLM summary runs instead, unless `/vcc on` is set (below) |
 
 The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens`. Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults (`threshold`, `protect_last_n`, `target_ratio`, the `proactive_prune_*` keys and the rest; see `vcc/engine.py:_compressor_kwargs`).
 
-With `only_local_models: true`, the engine checks the chat model's endpoint at every compaction, using Hermes's own `is_local_endpoint`. Loopback, LAN, link-local, `.local` and Tailscale addresses count as local. A local model gets the instant summary, with no LLM call. A hosted model (Anthropic, OpenRouter and so on) gets Hermes's stock summary, written by the model Hermes uses for summaries, and the summariser's context window caps the trigger, as with the built-in compressor. The check follows model switches and fallbacks within a session, and `vcc_engaged` and `vcc_remote_passes` in the engine status show which path ran.
+With `only_local_models: true`, the engine checks the chat model's endpoint at every compaction, using Hermes's own `is_local_endpoint`. Loopback, LAN, link-local, `.local` and Tailscale addresses count as local. Only network endpoints (`http`, `https`, `ws`, `wss`) can be local: a bridge such as `process://claude-subscription-directsdk-experimental`, which drives the Claude Code CLI on this machine, is a hosted model. A local model gets the instant summary, with no LLM call. A hosted model (Anthropic, the Claude Code CLI, OpenRouter and so on) gets Hermes's stock summary, written by the model Hermes uses for summaries, and the summariser's context window caps the trigger, as with the built-in compressor. The check follows model switches and fallbacks within a session, and `vcc_engaged`, `vcc_model_local` and `vcc_remote_passes` in the engine status show which path ran.
+
+### Switching vcc for hosted models from a chat: `/vcc`
+
+Type these in any Hermes chat (WebUI, Discord, CLI):
+
+| Command | Effect |
+|---|---|
+| `/vcc` | Show whether hosted models use vcc now, and why |
+| `/vcc on` | Hosted models use vcc too |
+| `/vcc off` | Hosted models get Hermes's stock LLM summary |
+| `/vcc default` | Back to the config: vcc for hosted models unless `only_local_models` is on |
+
+A local model always uses vcc; the switch only decides for hosted ones. It is one switch per Hermes profile, kept in `<HERMES_HOME>/vcc_state.json`, so it reaches every chat and every Hermes process and survives restarts. It is not per chat, because Hermes's WebUI calls plugin commands without saying which chat they came from. A change applies from the next compaction. If it changes who writes the summary mid-session, the engine recomputes the trigger as `update_model` would, so the summariser's window caps it exactly while Hermes summarises. The engine status reports `vcc_hosted_models` (`on`/`off`) and `vcc_hosted_source` (`config` or `/vcc`).
 
 If a memory provider plugin gives Hermes text to preserve at compaction time (`on_pre_compress`), the summary keeps it in a `## Memory Provider Context` section. It is treated as data, capped like `## Earlier Summary`, and carried into later summaries until the provider sends new text.
 
@@ -197,7 +210,7 @@ If a memory provider plugin gives Hermes text to preserve at compaction time (`o
 What the plugin's runtime code (`__init__.py` and the `vcc/` folder) does and doesn't do:
 
 - **Network:** no network calls of its own, and no model call on the normal path. If `fallback_to_llm` is on and a summary raises an error, Hermes's own summary call runs for that pass, to the model Hermes is configured to use.
-- **Files:** reads Hermes's `config.yaml` once, through Hermes's `load_config_readonly`. It reads no other files, writes no files, and doesn't open `state.db`.
+- **Files:** reads Hermes's `config.yaml` through Hermes's `load_config_readonly`. The only file it writes is `<HERMES_HOME>/vcc_state.json`, and only when someone types `/vcc on`, `off` or `default`: one boolean, written atomically at mode 0600 (`default` deletes it). Engines read that file at each compaction check (one `stat` while it hasn't changed). It doesn't open `state.db`.
 - **No subprocesses, shell commands, environment variables, credentials, background threads, telemetry or self-update.** Python standard library only.
 - **Session history:** it works only on the message list Hermes passes in. It never modifies or deletes messages; archiving is Hermes's own behavior.
 - **Untrusted tool output is treated as data:**
@@ -210,7 +223,7 @@ What the plugin's runtime code (`__init__.py` and the `vcc/` folder) does and do
   - At startup, if any Hermes internal it needs is missing, the engine runs as the stock compressor and logs a warning.
   - If a summary raises an error, that pass falls back to the stock LLM summary.
   - On 2 of 71 benchmark windows with no user-written messages, Hermes's own provenance check rejected the summary and the pass fell back.
-- **Hermes internals:** the engine uses private `ContextCompressor` methods (`_generate_summary`, `_augment_summary_lean`, `_ground_historical_task_snapshot` and others) and private helpers in `agent.conversation_compression` and `agent.auxiliary_client`. These aren't a documented plugin API and can change in a Hermes update. That is why the startup check and fallback exist.
+- **Hermes internals:** the engine uses private `ContextCompressor` methods (`_generate_summary`, `_augment_summary_lean`, `_ground_historical_task_snapshot`, `_derive_trigger`, `_apply_threshold_tokens_cap` and others) and private helpers in `agent.conversation_compression` and `agent.auxiliary_client`. These aren't a documented plugin API and can change in a Hermes update. That is why the startup check and fallback exist.
 
 The `bench/` scripts are separate and never loaded by Hermes. When you run them by hand, they read `~/.hermes/state.db` read-only, call your local model server, and write results to `~/.cache/hermes-vcc-engine/` at mode 0600. They print only counts, scores, ids and hashes. Before each model call, the GPU benchmarks check that nobody else is using the server (`bench/idle.py` reads the WebUI's `/health`, the router's `/models` and `/slots`, and the `llama-server` journal), and they never load or swap a model.
 

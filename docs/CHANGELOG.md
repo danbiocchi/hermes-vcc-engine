@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+- **`/vcc` chat command.** `/vcc on`, `/vcc off` and `/vcc default` decide whether hosted models use vcc, from any chat (WebUI, Discord, CLI); `/vcc` alone shows the setting. Local models always use vcc. Without a switch, `only_local_models` decides as before. The switch is one per Hermes profile, in `<HERMES_HOME>/vcc_state.json`, so every process sees it and it survives restarts. It is not per chat because the WebUI calls plugin commands without the chat's id. When a switch changes who writes the summary mid-session, the trigger is recomputed as `update_model` does, so the summariser's window caps it exactly while Hermes summarises. New status fields: `vcc_model_local`, `vcc_hosted_models`, `vcc_hosted_source`.
+- **The Claude Code CLI bridge counts as hosted.** Hermes's `is_local_endpoint` calls `process://claude-subscription-directsdk-experimental` local, because its dot-less "host" looks like a LAN name, so `only_local_models: true` still projected for Claude. Only network schemes (`http`, `https`, `ws`, `wss`) can be local now; a real dot-less LAN host such as `http://gpu-box:8080` stays local.
+- The summary text is unchanged.
+- Tested against Hermes v0.22.5: all 139 tests pass.
+
 ## 0.4.3
 
 - **New option `context.vcc.only_local_models`** (default `false`, so nothing changes unless you set it). When it is on, the engine writes the summary only while the chat model runs locally: loopback, LAN, link-local, `.local` or Tailscale, judged by Hermes's own `is_local_endpoint`. With a hosted model, that compaction uses Hermes's stock LLM summary, and the summariser's context window caps the trigger as it does for the built-in compressor. The check runs at every compaction, so it follows model switches and fallbacks. The engine status reports `vcc_engaged` and `vcc_remote_passes`.

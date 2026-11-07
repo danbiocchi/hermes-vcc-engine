@@ -200,6 +200,103 @@ def test_without_the_option_a_remote_model_is_still_projected(no_llm):
     assert (eng._vcc_runs, eng._vcc_remote_passes) == (1, 0)
 
 
+# ----------------------------------------------------------------------------- hosted models and /vcc
+
+CLAUDE_CLI = "process://claude-subscription-directsdk-experimental"
+
+
+@pytest.fixture()
+def switch(monkeypatch, tmp_path):
+    """The /vcc switch, kept in this test's own folder."""
+    import toggle
+
+    path = tmp_path / toggle.STATE_FILE
+    monkeypatch.setattr(toggle, "state_path", lambda: path)
+    toggle._cache.update(key=None, value=None)
+    return toggle.set_hosted_override
+
+
+@pytest.fixture()
+def stock_llm(monkeypatch, cc):
+    import engine
+
+    monkeypatch.setattr(engine.projector, "project", lambda *a, **k: pytest.fail("projected"))
+    requests = []
+    monkeypatch.setattr(cc, "call_llm", lambda **k: requests.append(k) or
+                        {"choices": [{"message": {"content": "## Goal\nstock"}, "finish_reason": "stop"}]})
+    return requests
+
+
+def test_the_claude_cli_bridge_is_a_hosted_model(stock_llm, switch):
+    # Hermes's rule alone calls process://claude-subscription-... local (a dot-less "host").
+    import engine
+
+    assert engine._is_local_endpoint(CLAUDE_CLI) is False
+    assert engine._is_local_endpoint("http://claude-box:8080/v1") is True  # a real dot-less LAN host stays local
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="claude-opus-5-5[1m]", context_length=98_304, base_url=CLAUDE_CLI,
+                     provider="claude-subscription-directsdk-experimental")
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert stock_llm and (eng._vcc_runs, eng._vcc_remote_passes) == (0, 1)
+    status = eng.get_status()
+    assert (status["vcc_engaged"], status["vcc_model_local"], status["vcc_hosted_models"],
+            status["vcc_hosted_source"]) == (False, False, "off", "config")
+
+
+def test_vcc_on_projects_for_a_hosted_model_despite_only_local_models(no_llm, switch):
+    switch(True)
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="claude-opus-5-5[1m]", context_length=98_304, base_url=CLAUDE_CLI, provider="x")
+    out = eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert "## Detailed Session Log" in summary_of(eng, out) and (eng._vcc_runs, eng._vcc_remote_passes) == (1, 0)
+    assert (eng.get_status()["vcc_hosted_models"], eng.get_status()["vcc_hosted_source"]) == ("on", "/vcc")
+
+
+def test_vcc_off_sends_a_hosted_model_to_the_stock_summary_without_the_option(stock_llm, switch):
+    switch(False)
+    eng = make_engine()
+    eng.update_model(model="some-model", context_length=100_000, base_url="https://api.anthropic.com",
+                     provider="anthropic")
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert stock_llm and (eng._vcc_runs, eng._vcc_remote_passes) == (0, 1)
+
+
+def test_vcc_off_never_touches_a_local_model(no_llm, switch):
+    switch(False)
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="qwen", context_length=98_304, base_url="http://127.0.0.1:8080/v1", provider="custom")
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert (eng._vcc_runs, eng._vcc_remote_passes) == (1, 0)
+
+
+def test_a_switch_mid_session_reapplies_the_summariser_cap(switch):
+    eng = make_engine(config=LOCAL_ONLY)
+    switch(True)
+    eng.update_model(model="claude", context_length=98_304, base_url=CLAUDE_CLI, provider="x")
+    eng._aux_context_ceiling = 8_000  # what the feasibility probe would install
+    eng.update_model(model="claude", context_length=98_304, base_url=CLAUDE_CLI, provider="x")
+    uncapped = int(98_304 * 0.75)
+    assert eng.threshold_tokens == uncapped  # vcc writes the summary: the summariser's window is irrelevant
+    switch(False)
+    eng.should_compress(1_000)
+    assert eng.threshold_tokens == 8_000  # Hermes summarises now: its window caps the trigger
+    switch(None)  # back to the config (only_local_models), still Hermes
+    eng.should_compress(1_000)
+    assert eng.threshold_tokens == 8_000
+    switch(True)
+    eng.should_compress(1_000)
+    assert eng.threshold_tokens == uncapped
+
+
+def test_no_switch_keeps_the_trigger_untouched(switch):
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="claude", context_length=98_304, base_url=CLAUDE_CLI, provider="x")
+    before = eng.threshold_tokens
+    for _ in range(3):
+        eng.should_compress(1_000)
+    assert eng.threshold_tokens == before
+
+
 def test_the_summariser_window_caps_the_trigger_only_when_hermes_summarises():
     eng = make_engine(config=LOCAL_ONLY)
     eng.update_model(model="some-model", context_length=98_304, base_url="https://api.anthropic.com",
@@ -319,6 +416,18 @@ def test_loads_through_hermes_user_plugin_dir(sandbox_home):
     eng = load_context_engine("vcc")
     assert eng is not None and eng.name == "vcc"
     assert type(eng).__mro__[1].__name__ == "ContextCompressor"
+
+
+def test_vcc_command_reaches_hermes_and_its_dispatcher(sandbox_home, switch):
+    test_loads_through_hermes_user_plugin_dir(sandbox_home)
+    from hermes_cli.plugin_command_dispatch import invoke_plugin_command
+    from hermes_cli.plugins import get_plugin_command_handler, get_plugin_commands
+
+    assert "vcc" in get_plugin_commands()
+    handler = get_plugin_command_handler("vcc")
+    text = invoke_plugin_command(handler, "on", source=None, session_id="s", session_key="k", platform="webui")
+    assert ": ON (set with /vcc)" in text
+    assert "Usage" not in invoke_plugin_command(handler, "", session_id="s")
 
 
 # ----------------------------------------------------------------------------- v0.2 fast anchors
