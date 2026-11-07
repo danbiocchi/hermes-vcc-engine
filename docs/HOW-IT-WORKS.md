@@ -344,7 +344,7 @@ These sections come from Hermes, and the stock path adds them too. (The anchor i
 
 ### Unit and integration tests
 
-`pytest -q` runs 140 tests (`tests/`). Projector tests need nothing else. Engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`) and skip without one. They replace `call_llm` with a function that fails the test if called (`tests/test_engine.py:no_llm`), run full `compress()` passes, compare `anchors.build` against Hermes's builder, and load the plugin through Hermes's loader, including the `/vcc` command through Hermes's own command dispatcher. `tests/test_toggle.py` covers the `/vcc` switch file and command text and needs no Hermes. `HERMES_HOME` is redirected to a temporary directory (`tests/conftest.py`).
+`pytest -q` runs 142 tests (`tests/`). Projector tests need nothing else. Engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`) and skip without one. They replace `call_llm` with a function that fails the test if called (`tests/test_engine.py:no_llm`), run full `compress()` passes, compare `anchors.build` against Hermes's builder, and load the plugin through Hermes's loader, including the `/vcc` command through Hermes's own command dispatcher. `tests/test_toggle.py` covers the `/vcc` switch file and command text and needs no Hermes. `HERMES_HOME` is redirected to a temporary directory (`tests/conftest.py`).
 
 ### Proofs (`bench/proofs.py`)
 

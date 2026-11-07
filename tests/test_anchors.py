@@ -105,6 +105,26 @@ def test_verify_catches_a_broken_prefilter(cc, monkeypatch):
     assert anchors.verify(cc) is False
 
 
+def test_a_slash_skill_body_stays_out_like_in_hermes(cc):
+    import anchors
+
+    turns = anchors._skill_turns()
+    if hasattr(cc, "_typed_user_text"):
+        assert "example_path.py" not in cc._build_anchor_index(turns)  # the fixture exercises the filter
+    assert same(cc, turns)
+    assert same(cc, [*turns, *fix_the_build()])
+
+
+def test_verify_catches_a_build_that_reads_raw_user_text(cc, monkeypatch):
+    import anchors
+
+    if not hasattr(cc, "_typed_user_text"):
+        pytest.skip("this Hermes reads user turns as is")
+    monkeypatch.setattr(anchors, "_region_text", lambda turns, _cc: "\n".join(
+        c for c in (m.get("content") for m in turns) if isinstance(c, str) and c))
+    assert anchors.verify(cc) is False
+
+
 def test_prefilters_only_cover_patterns_hermes_has(cc):
     import anchors
 

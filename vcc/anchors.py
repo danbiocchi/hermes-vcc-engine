@@ -143,10 +143,26 @@ def _candidate_text(text: str, n_lines: int, pattern_src: str) -> str:
     return "\n".join(lines)
 
 
+def _region_text(turns: list[dict[str, Any]], cc: Any) -> str:
+    """The text Hermes harvests: every string content, a ``/skill`` user turn as the user typed it.
+
+    Hermes (from d602082868, 2026-10-14) reads a user turn through ``_typed_user_text``, so
+    the example paths in an inline skill body stay out of the index. Older Hermes has no
+    such helper and reads every content as is.
+    """
+    typed = getattr(cc, "_typed_user_text", None)
+    if typed is None:
+        contents = (msg.get("content") for msg in turns)
+    else:
+        contents = (typed(msg["content"]) if msg.get("role") == "user" and isinstance(msg.get("content"), str)
+                    else msg.get("content") for msg in turns)
+    return "\n".join(c for c in contents if isinstance(c, str) and c)
+
+
 def build(turns: list[dict[str, Any]], cc: Any = None) -> str:
     """Same string as Hermes's ``_build_anchor_index(turns)``."""
     cc = cc or _hermes()
-    text = "\n".join(c for c in (msg.get("content") for msg in turns) if isinstance(c, str) and c)
+    text = _region_text(turns, cc)
     if not text:
         return ""
     n_lines = text.count("\n") + 1
@@ -209,7 +225,22 @@ def _fixture() -> list[dict[str, Any]]:
     turns: list[dict[str, Any]] = [{"content": r} for r in rows]
     turns += [{"content": f"src/module_{i}.py raised Error{i}Error: boom {i} #{1000 + i}"} for i in range(160)]
     turns += [{"content": "https://example.com/" + "p" * 60 + str(i)} for i in range(50)]
+    turns += _skill_turns()
     return turns
+
+
+def _skill_turns() -> list[dict[str, Any]]:
+    """A ``/skill`` user turn (built from Hermes's own scaffold constants) next to plain user turns."""
+    plain = [{"role": "user", "content": "please fix skills/demo/notes.md and fix/user-branch"},
+             {"role": "assistant", "content": "[IMPORTANT: not a skill] see skills/demo/reply.py"}]
+    try:
+        from agent import skill_commands as sc
+
+        header = f'{sc._SKILL_INVOCATION_PREFIX}"anchor-probe" skill. {sc._SINGLE_SKILL_MARKER}'
+    except Exception:  # Hermes without slash-skill scaffolds: nothing special to mirror
+        return plain
+    body = "\n\nExample: edit skills/probe/example_path.py on fix/probe-branch, see #4242\n"
+    return [{"role": "user", "content": header + body}, *plain]
 
 
 def verify(cc: Any = None) -> bool:

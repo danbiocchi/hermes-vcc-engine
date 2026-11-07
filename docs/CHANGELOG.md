@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.5
+
+- **The fast anchor index matches Hermes again on `/skill` turns.** Since Hermes d602082868 (2026-10-14, in v0.22.5), Hermes reads a user turn through `_typed_user_text` when it builds the Anchor Index, so the example paths and branches in an inline skill body stay out of it. `anchors.build` still read the raw text, so on a region with a `/skill` turn it listed those identifiers and its counts and order differed from Hermes's. The engine compares the two only on the first compaction of each process, so a later compaction could get the different index. `anchors.build` now reads user turns through Hermes's own helper, and older Hermes without it is read as before. The built-in self-check fixture now contains a `/skill` turn, so this kind of drift turns the fast path off instead of changing the output.
+- Found by the benchmark golden check after updating to Hermes v0.23.0: one session in a fresh corpus differed. All 63 anchor cases from the corpus (whole sessions and both halves) now match Hermes byte for byte on v0.22.5 and v0.23.0.
+- Hermes v0.23.0 changed the compaction output itself: the skill reload note moved into a Skill Safety Rule section, and the tail cut changed. The stock compressor gives the same tail as vcc on all 19 bench sessions on both versions, so the benchmark golden was rewritten on v0.23.0.
+- Tested against Hermes v0.22.5 and v0.23.0: all 142 tests pass on each (2 new).
+
 ## 0.4.4
 
 - **`/vcc` chat command.** `/vcc on`, `/vcc off` and `/vcc default` decide whether hosted models use vcc, from any chat (WebUI, Discord, CLI); `/vcc` alone shows the setting. Local models always use vcc. Without a switch, `only_local_models` decides as before. The switch is one per Hermes profile, in `<HERMES_HOME>/vcc_state.json`, so every process sees it and it survives restarts. It is not per chat because the WebUI calls plugin commands without the chat's id. When a switch changes who writes the summary mid-session, the trigger is recomputed as `update_model` does, so the summariser's window caps it exactly while Hermes summarises. New status fields: `vcc_model_local`, `vcc_hosted_models`, `vcc_hosted_source`.
