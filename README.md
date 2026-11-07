@@ -25,7 +25,7 @@ Restart Hermes (CLI, gateway or web UI). Every compaction now logs `vcc: project
 
 Changed your mind? `hermes config set context.engine compressor` puts the stock compressor back.
 
-Works with Hermes `0.21.7` or newer. The engine tests pass on the `v0.21.7`, `v0.22.2` and `v0.22.4` releases, and a live compaction with a local model was checked on `v0.22.2`.
+Works with Hermes `0.21.7` or newer. The engine tests pass on the `v0.21.7`, `v0.22.2`, `v0.22.4` and `v0.22.5` releases, and a live compaction with a local model was checked on `v0.22.2`.
 
 ## Who it's for
 
@@ -277,7 +277,7 @@ To benchmark another context engine with the same harness, set `VCC_OTHER=<path 
 ```bash
 git clone https://github.com/danbiocchi/hermes-vcc-engine && cd hermes-vcc-engine
 uv venv --python 3.14 && uv pip install pytest
-.venv/bin/python -m pytest tests -q    # 114 tests; CI runs Python 3.11 to 3.14
+.venv/bin/python -m pytest tests -q    # 140 tests; CI runs Python 3.11 to 3.14
 ```
 
 The projector tests run anywhere. The engine and anchor tests need a Hermes checkout (`HERMES_AGENT_DIR`, default `~/.hermes/hermes-agent`) and skip without one. They:

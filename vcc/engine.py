@@ -51,7 +51,7 @@ _DEFAULTS: dict[str, Any] = {
     "max_budget_tokens": 8000,
     "fallback_to_llm": True,     # on an unexpected projection error, use the stock summary
     "fast_anchors": True,        # build Hermes's anchor index with anchors.py (same output, faster)
-    "only_local_models": False,  # hosted models get the stock LLM summary by default (/vcc switches it)
+    "only_local_models": False,  # True: hosted models get the stock LLM summary unless /vcc on (toggle.py)
 }
 _CHARS_PER_TOKEN = 4  # same rough ratio Hermes's own estimator uses
 
@@ -250,15 +250,14 @@ class VccEngine(ContextCompressor):
         options = getattr(self, "_vcc_options", None)  # unset while ContextCompressor.__init__ runs
         if not options:
             return True
-        return _is_local_endpoint(getattr(self, "base_url", "")) or self._vcc_hosted_on()
+        return _is_local_endpoint(getattr(self, "base_url", "")) or self._vcc_hosted()[0]
 
-    def _vcc_hosted_on(self) -> bool:
-        """Whether hosted models get vcc: the ``/vcc`` switch if set, else not ``only_local_models``."""
+    def _vcc_hosted(self) -> tuple[bool, str]:
+        """``(hosted models get vcc?, "/vcc" or "config")``: the switch if set, else not ``only_local_models``."""
         override = toggle.hosted_override()
-        return (not self._vcc_options["only_local_models"]) if override is None else override
-
-    def _vcc_hosted_source(self) -> str:
-        return "config" if toggle.hosted_override() is None else "/vcc"
+        if override is None:
+            return not self._vcc_options["only_local_models"], "config"
+        return override, "/vcc"
 
     def _vcc_sync_trigger(self) -> None:
         """Re-derive the trigger when ``/vcc`` flipped who writes the summary since it was computed.
@@ -305,6 +304,7 @@ class VccEngine(ContextCompressor):
 
     def get_status(self) -> dict[str, Any]:
         status = super().get_status()
+        hosted_on, hosted_source = self._vcc_hosted()
         status.update({
             "vcc_passthrough": self._vcc_passthrough,
             "vcc_runs": self._vcc_runs,
@@ -312,8 +312,8 @@ class VccEngine(ContextCompressor):
             "vcc_remote_passes": self._vcc_remote_passes,
             "vcc_engaged": self._vcc_engaged() and not self._vcc_passthrough,
             "vcc_model_local": _is_local_endpoint(getattr(self, "base_url", "")),
-            "vcc_hosted_models": "on" if self._vcc_hosted_on() else "off",
-            "vcc_hosted_source": self._vcc_hosted_source(),
+            "vcc_hosted_models": "on" if hosted_on else "off",
+            "vcc_hosted_source": hosted_source,
             "vcc_last_ms": self._vcc_last_ms,
             "vcc_fast_anchors": (
                 "off (config)" if not self._vcc_options["fast_anchors"]
@@ -378,7 +378,7 @@ class VccEngine(ContextCompressor):
             self._vcc_remote_passes += 1
             logger.info("vcc: the chat model (%s) is not local; using the stock LLM summary (%s)",
                         getattr(self, "provider", "") or "unknown provider",
-                        "/vcc off" if self._vcc_hosted_source() == "/vcc" else "context.vcc.only_local_models")
+                        "/vcc off" if self._vcc_hosted()[1] == "/vcc" else "context.vcc.only_local_models")
             return super()._generate_summary(turns_to_summarize, focus_topic, memory_context, bypass_cooldown)
 
         import agent.context_compressor as cc

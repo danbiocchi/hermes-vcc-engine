@@ -5,7 +5,7 @@
 - **`/vcc` chat command.** `/vcc on`, `/vcc off` and `/vcc default` decide whether hosted models use vcc, from any chat (WebUI, Discord, CLI); `/vcc` alone shows the setting. Local models always use vcc. Without a switch, `only_local_models` decides as before. The switch is one per Hermes profile, in `<HERMES_HOME>/vcc_state.json`, so every process sees it and it survives restarts. It is not per chat because the WebUI calls plugin commands without the chat's id. When a switch changes who writes the summary mid-session, the trigger is recomputed as `update_model` does, so the summariser's window caps it exactly while Hermes summarises. New status fields: `vcc_model_local`, `vcc_hosted_models`, `vcc_hosted_source`.
 - **The Claude Code CLI bridge counts as hosted.** Hermes's `is_local_endpoint` calls `process://claude-subscription-directsdk-experimental` local, because its dot-less "host" looks like a LAN name, so `only_local_models: true` still projected for Claude. Only network schemes (`http`, `https`, `ws`, `wss`) can be local now; a real dot-less LAN host such as `http://gpu-box:8080` stays local.
 - The summary text is unchanged.
-- Tested against Hermes v0.22.5: all 139 tests pass.
+- Tested against Hermes v0.22.5: all 140 tests pass (25 new: the switch, the command through Hermes's dispatcher, the Claude CLI bridge, and the trigger after a flip).
 
 ## 0.4.3
 

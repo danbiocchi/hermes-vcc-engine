@@ -288,6 +288,17 @@ def test_a_switch_mid_session_reapplies_the_summariser_cap(switch):
     assert eng.threshold_tokens == uncapped
 
 
+def test_the_switch_cannot_wake_an_engine_in_passthrough(monkeypatch, stock_llm, switch):
+    import engine
+
+    monkeypatch.setattr(engine, "_missing_seams", lambda: ["_something_renamed"])
+    switch(True)
+    eng = make_engine(config=LOCAL_ONLY)
+    eng.update_model(model="claude", context_length=98_304, base_url=CLAUDE_CLI, provider="x")
+    eng.compress(session(fix_the_build(), long_session(30, output_chars=800)), force=True)
+    assert stock_llm and eng._vcc_runs == 0 and eng.get_status()["vcc_engaged"] is False
+
+
 def test_no_switch_keeps_the_trigger_untouched(switch):
     eng = make_engine(config=LOCAL_ONLY)
     eng.update_model(model="claude", context_length=98_304, base_url=CLAUDE_CLI, provider="x")
