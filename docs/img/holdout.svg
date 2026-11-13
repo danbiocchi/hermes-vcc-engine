@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="473" viewBox="0 0 960 473" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif"><rect width="960" height="473" rx="12" fill="#0d1117"/>
+<text x="24" y="34" font-size="19" font-weight="700" fill="#e6edf3" text-anchor="start">The result holds on questions and sessions it was not tuned on</text>
+<text x="24" y="55" font-size="13.5" font-weight="400" fill="#9198a1" text-anchor="start">Share of factual questions answered correctly after compaction, by what the model was given.</text>
+<rect x="24" y="72" width="12" height="12" rx="3" fill="#3fb950"/>
+<text x="42" y="83" font-size="13.5" font-weight="600" fill="#e6edf3" text-anchor="start">VCC Engine</text>
+<rect x="142.0" y="72" width="12" height="12" rx="3" fill="#58799e"/>
+<text x="160.0" y="83" font-size="13.5" font-weight="400" fill="#e6edf3" text-anchor="start">Full window (never compacted)</text>
+<rect x="400.6" y="72" width="12" height="12" rx="3" fill="#5c6670"/>
+<text x="418.6" y="83" font-size="13.5" font-weight="400" fill="#9198a1" text-anchor="start">Stock Hermes</text>
+<rect x="533.4000000000001" y="72" width="12" height="12" rx="3" fill="#3d444d"/>
+<text x="551.4000000000001" y="83" font-size="13.5" font-weight="400" fill="#9198a1" text-anchor="start">Other VCC plugin</text>
+<text x="256" y="153.5" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="end">All questions</text>
+<text x="256" y="170.5" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="end">832 answers per context</text>
+<rect x="270" y="112" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="112" width="491.4" height="18" rx="5" fill="#3fb950"/>
+<text x="771.4" y="126" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">91.0%</text>
+<rect x="270" y="135" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="135" width="470.3" height="18" rx="5" fill="#58799e"/>
+<text x="750.3" y="149" font-size="14" font-weight="500" fill="#e6edf3" text-anchor="start">87.1%</text>
+<rect x="270" y="158" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="158" width="411.5" height="18" rx="5" fill="#5c6670"/>
+<text x="691.5" y="172" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">76.2%</text>
+<rect x="270" y="181" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="181" width="402.3" height="18" rx="5" fill="#3d444d"/>
+<text x="682.3" y="195" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">74.5%</text>
+<text x="256" y="266.5" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="end">Independent questions</text>
+<text x="256" y="283.5" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="end">written without reading the summariser</text>
+<rect x="270" y="225" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="225" width="476.8" height="18" rx="5" fill="#3fb950"/>
+<text x="756.8" y="239" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">88.3%</text>
+<rect x="270" y="248" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="248" width="452.5" height="18" rx="5" fill="#58799e"/>
+<text x="732.5" y="262" font-size="14" font-weight="500" fill="#e6edf3" text-anchor="start">83.8%</text>
+<rect x="270" y="271" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="271" width="380.2" height="18" rx="5" fill="#5c6670"/>
+<text x="660.2" y="285" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">70.4%</text>
+<rect x="270" y="294" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="294" width="364.0" height="18" rx="5" fill="#3d444d"/>
+<text x="644.0" y="308" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">67.4%</text>
+<text x="256" y="379.5" font-size="15" font-weight="500" fill="#e6edf3" text-anchor="end">Unseen windows</text>
+<text x="256" y="396.5" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="end">10 windows never looked at in development</text>
+<rect x="270" y="338" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="338" width="488.2" height="18" rx="5" fill="#3fb950"/>
+<text x="768.2" y="352" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">90.4%</text>
+<rect x="270" y="361" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="361" width="487.1" height="18" rx="5" fill="#58799e"/>
+<text x="767.1" y="375" font-size="14" font-weight="500" fill="#e6edf3" text-anchor="start">90.2%</text>
+<rect x="270" y="384" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="384" width="437.9" height="18" rx="5" fill="#5c6670"/>
+<text x="717.9" y="398" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">81.1%</text>
+<rect x="270" y="407" width="540" height="18" rx="5" fill="#1c2128"/>
+<rect x="270" y="407" width="432.5" height="18" rx="5" fill="#3d444d"/>
+<text x="712.5" y="421" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">80.1%</text>
+<text x="24" y="455" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">23 real compaction windows, 416 questions in two wordings. Local Qwen3.8-27B, Hermes 0.21.7. Method: docs/HOW-IT-WORKS.md, section 7.</text>
+</svg>

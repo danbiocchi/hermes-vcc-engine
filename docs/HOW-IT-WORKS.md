@@ -4,6 +4,8 @@ This document is for readers who see "9,000x faster with no accuracy loss" and a
 
 All Hermes references are to `~/.hermes/hermes-agent/agent/context_compressor.py` unless another file is named.
 
+Contents: [1. The problem](#1-the-problem-what-hermes-compaction-costs-on-a-local-model) · [2. The VCC paper](#2-the-idea-from-the-vcc-paper-and-how-this-plugin-adapts-it) · [3. What changes inside Hermes](#3-what-vcc-changes-inside-hermes) · [4. Why it is faster](#4-why-it-is-faster) · [5. Why facts are not lost](#5-why-the-information-that-matters-is-not-lost) · [6. What it gives up](#6-what-it-gives-up) · [7. Tests and benchmarks](#7-how-it-is-tested-and-how-to-reproduce-it) · [8. Configuration](#8-configuration) · [9. Security and privacy](#9-security-and-privacy)
+
 ---
 
 ## 1. The problem: what Hermes compaction costs on a local model
@@ -56,6 +58,12 @@ The paper tests this in one setting. On AppWorld, a *reflector* model reads exec
 | Full view: the original file | Full view: the archived rows in `state.db`, read with Hermes's `session_search` tool |
 
 What carries over is the central choice. The reduced view is **computed** from the trace by fixed rules, and every line points back to its source. It is not a rewrite by a model. What does not carry over is the paper's evidence: its AppWorld results say nothing about Hermes compaction. The evidence for this plugin is the plugin's own (section 7).
+
+### Related work
+
+- [The Complexity Trap](https://arxiv.org/abs/2508.21433) found that for software-engineering agents, simply masking old tool output performs about as well as LLM summarization, at lower cost.
+- [Factory's compression evaluations](https://factory.com/news/evaluating-compression) found file tracking was the weakest area of every compressor they measured.
+- [NoLiMa](https://arxiv.org/abs/2502.05167) and [Sufficient Context](https://arxiv.org/abs/2411.06037) explain why wording matters (section 5e).
 
 ---
 
@@ -245,7 +253,7 @@ A model writing prose decides what matters and may drop something. These rules i
 
 ### (d) Small local models write lossy summaries
 
-The stock prompt asks the summarizer to "PRESERVE EXACTLY: PR/issue numbers, file paths, ... commands, error messages" (`_LEAN_SESSION_LOG_SECTION`). How well a local 27B model at IQ3 quantization follows that over ~40k tokens of input is an empirical question. In the head-to-head, the stock summary scored below the uncompacted baseline on command-outcome and file-name questions (section 7). The README also reports two cases in daily use where the stock "summary" came back longer than what it replaced. Hermes already partly protects against this: the anchor index and verbatim user messages are added deterministically to the stock summary too (`_augment_summary_lean`). vcc goes further and makes the whole body deterministic.
+The stock prompt asks the summarizer to "PRESERVE EXACTLY: PR/issue numbers, file paths, ... commands, error messages" (`_LEAN_SESSION_LOG_SECTION`). How well a local 27B model at IQ3 quantization follows that over ~40k tokens of input is an empirical question. In the head-to-head, the stock summary scored below the uncompacted baseline on command-outcome and file-name questions (section 7). In daily use the author also saw two stock "summaries" come back longer than what they replaced. Hermes already partly protects against this: the anchor index and verbatim user messages are added deterministically to the stock summary too (`_augment_summary_lean`). vcc goes further and makes the whole body deterministic.
 
 ### (e) Presence is not enough: the fact must be stated in words a small model connects to the question
 
@@ -416,6 +424,31 @@ Also established by this harness:
 - v0.1 and v0.2 summaries are byte-identical on all 69 frozen windows.
 - On 2 of 71 windows with no user-authored messages, Hermes's provenance check rejected the vcc summary. `_validate_summary_user_provenance` runs after `_ground_historical_task_snapshot`, which can insert a user turn the check doesn't count. The stock path runs the same two steps in the same order. Those windows are excluded from every condition.
 
+All eight question types on the independent question set, both wordings:
+
+| Question | 0.4.0 | Full window | Stock | Other plugin |
+|---|---:|---:|---:|---:|
+| Did command X succeed? | **107 / 108** | 100 / 108 | 71 / 108 | 55 / 108 |
+| Did the last command succeed? | **24 / 26** | 21 / 26 | 18 / 26 | 10 / 26 |
+| Was command X run? | **41 / 46** | 33 / 46 | 25 / 46 | 29 / 46 |
+| Was error X raised? | **18 / 18** | 1 / 18 | 5 / 18 | 0 / 18 |
+| Was file X changed? | 86 / 88 | 86 / 88 | 74 / 88 | 84 / 88 |
+| Was file X changed? (it was only read) | 55 / 62 | 55 / 62 | 54 / 62 | 55 / 62 |
+| Which word was in the user's request? | 90 / 102 | 93 / 102 | 88 / 102 | 83 / 102 |
+| How many times was tool X called? | 15 / 44 | 25 / 44 | 13 / 44 | 17 / 44 |
+
+"I don't know" answers out of 832: 0.4.0 gave 23, the full window 27, stock 71 and the other plugin 94.
+
+### Integrity checks
+
+| Check | Result |
+|---|---:|
+| Every word in every session-log line appears in the message that line cites | 937 / 937 lines |
+| The same check, with a fake word planted to prove it can fail | 17 / 17 caught |
+| `[#N]` links in real stored summaries, opened with Hermes's `session_search` | 436 / 436 open the right message |
+| Failed commands reported as failed, checked against the raw tool results (69 windows, ~490 commands) | 43 / 43, with 0 wrong outcomes |
+| Model calls during a normal compaction | 0 (the tests fail if one happens) |
+
 ### Threats to validity a reviewer should check
 
 1. **"FULL" is not the raw transcript.** `headtohead.py:context("FULL")` renders `e["turns"]`: the turns *after* Hermes's Phase-1 pruning, with tool results cut to 1,500 chars and call arguments to 600 (`accuracy.py:render_full`). Large old tool outputs are already one-line stubs in this baseline. "vcc matches FULL" therefore means "vcc matches the pruned middle region", not "vcc matches never compacting". This applies to round 1 only; the 0.4.0 report uses the untruncated message list.
@@ -447,6 +480,75 @@ $PY -I bench/certainty.py compact STOCK
 $PY -I bench/certainty.py compact v0.4
 $PY -I bench/certainty.py ask v0.4 STOCK FULL
 $PY -I bench/certainty.py report
+
+# An agent continuing a coding task through several compactions (needs bwrap)
+$PY -I bench/continuation.py run --arms vcc,stock  # 3 task variants per arm; resumable
+$PY -I bench/continuation.py report
 ```
 
+The GPU benchmarks use `VCC_BENCH_MODEL` (default: Hermes's `model.default`). They wait until that model is loaded and never load or swap one themselves. Before each model call, `bench/idle.py` checks that nobody else is using the server (the WebUI's `/health`, the router's `/models` and `/slots`, and the `llama-server` journal), and the run pauses while someone is. To benchmark another context engine with the same harness, set `VCC_OTHER=<path to its package>`.
+
+`bench/continuation.py` runs a real Hermes agent, with shell and file tools, on a generated coding task. The agent runs inside `bwrap` with the whole filesystem read-only except the task folder (`~/vcc-bench-tasks`), its own Hermes home (`~/vcc-bench-home`, outside your profiles so your running gateway never serves it) and Hermes's runtime lock files. Its model calls go through a proxy on `127.0.0.1:18080`. Both folders are recreated for every run and deleted at the end.
+
 The scripts print only counts, scores, ids and hashes. Frozen inputs and answers are written under `~/.cache/hermes-vcc-engine/` with mode 0600, never to the repository.
+
+---
+
+## 8. Configuration
+
+Everything is optional and lives under `context.vcc` in `config.yaml`. Out-of-range values are clamped, and values that can't be parsed fall back to the default.
+
+| Key | Default | Range | Effect |
+|---|---|---|---|
+| `budget_ratio` | `0.06` | 0.01–0.30 | Summary size as a share of the context window |
+| `min_budget_tokens` | `1500` | 300–50,000 | Smallest summary budget |
+| `max_budget_tokens` | `8000` | 500–100,000 | Largest summary budget |
+| `fallback_to_llm` | `true` | bool | If the summary raises an error, use Hermes's stock LLM summary for that pass |
+| `fast_anchors` | `true` | bool | Build Hermes's anchor index with `vcc/anchors.py`, which is checked against Hermes's own builder and switches itself off on any mismatch |
+| `only_local_models` | `false` | bool | Write the summary only while the chat model runs locally. With a hosted model, Hermes's stock LLM summary runs instead, unless `/vcc on` is set (below) |
+
+### The budget
+
+The budget is the smallest of `budget_ratio` × window, Hermes's own content-scaled summary budget, and `max_budget_tokens`, but never less than `min_budget_tokens` (`vcc/engine.py:_vcc_budget_chars`). Hermes doesn't pass its `compression:` settings to plugin engines, so the engine reads the same keys the built-in compressor reads, with the same defaults: `threshold`, `protect_last_n`, `target_ratio`, the `proactive_prune_*` keys and the rest (`vcc/engine.py:_compressor_kwargs`).
+
+### Local and hosted models (`only_local_models`)
+
+With `only_local_models: true`, the engine checks the chat model's endpoint at every compaction, using Hermes's own `is_local_endpoint`. Loopback, LAN, link-local, `.local` and Tailscale addresses count as local. Only network endpoints (`http`, `https`, `ws`, `wss`) can be local. A bridge such as `process://claude-subscription-directsdk-experimental`, which drives the Claude Code CLI on the same machine, is a hosted model.
+
+A local model gets the instant summary, with no LLM call. A hosted model (Anthropic, the Claude Code CLI, OpenRouter and so on) gets Hermes's stock summary, written by the model Hermes uses for summaries, and the summariser's context window caps the trigger, as with the built-in compressor. The check follows model switches and fallbacks within a session. `vcc_engaged`, `vcc_model_local` and `vcc_remote_passes` in the engine status show which path ran.
+
+### The `/vcc` chat command
+
+Type these in any Hermes chat (WebUI, Discord, CLI):
+
+| Command | Effect |
+|---|---|
+| `/vcc` | Show whether hosted models use vcc now, and why |
+| `/vcc on` | Hosted models use vcc too |
+| `/vcc off` | Hosted models get Hermes's stock LLM summary |
+| `/vcc default` | Back to the config: vcc for hosted models unless `only_local_models` is on |
+
+A local model always uses vcc; the switch only decides for hosted ones. It is one switch per Hermes profile, kept in `<HERMES_HOME>/vcc_state.json`, so it reaches every chat and every Hermes process and survives restarts. It is not per chat, because Hermes's WebUI calls plugin commands without saying which chat they came from.
+
+A change applies from the next compaction. If it changes who writes the summary mid-session, the engine recomputes the trigger as `update_model` would, so the summariser's window caps it exactly while Hermes summarises. The engine status reports `vcc_hosted_models` (`on`/`off`) and `vcc_hosted_source` (`config` or `/vcc`).
+
+### Memory providers
+
+If a memory provider plugin gives Hermes text to preserve at compaction time (`on_pre_compress`), the summary keeps it in a `## Memory Provider Context` section. It is treated as data, capped like `## Earlier Summary`, and carried into later summaries until the provider sends new text.
+
+---
+
+## 9. Security and privacy
+
+What the plugin's runtime code (`__init__.py` and the `vcc/` folder) does and doesn't do:
+
+- **Network:** it makes no network calls of its own, and no model call on the normal path. If `fallback_to_llm` is on and a summary raises an error, Hermes's own summary call runs for that pass, to the model Hermes is configured to use. The same call runs for a hosted model when `only_local_models` or `/vcc off` routes it to the stock summary.
+- **Files:** it reads Hermes's `config.yaml` through Hermes's `load_config_readonly`. The only file it writes is `<HERMES_HOME>/vcc_state.json`, and only when someone types `/vcc on`, `off` or `default`: one boolean, written atomically at mode 0600 (`default` deletes it). Engines read that file at each compaction check (one `stat` while it hasn't changed). It doesn't open `state.db`.
+- **Nothing else:** it starts no subprocesses, shell commands or background threads, reads no environment variables or credentials, and has no telemetry or self-update. It uses the Python standard library only.
+- **Session history:** it works only on the message list Hermes passes in. It never modifies or deletes messages; archiving is Hermes's own behavior.
+- **Untrusted tool output is treated as data.** ANSI escapes, control characters and bidi characters are stripped. Chat-template markers (`<|im_start|>`, `[INST]`, `<<SYS>>`, `<think>`) are neutralized. Quoted text can't open a new `##` section. Fuzz tests cover these.
+- **Secrets:** the summary goes through Hermes's own `_redact_compaction_text` before Hermes stores it. The plugin relies on that redactor and has no redaction tests of its own.
+- **Failure handling:** at startup, if any Hermes internal the engine needs is missing, it runs as the stock compressor and logs a warning. If a summary raises an error, that pass falls back to the stock LLM summary. On 2 of 71 benchmark windows with no user-written messages, Hermes's own provenance check rejected the summary and the pass fell back.
+- **Hermes internals:** the engine uses private `ContextCompressor` methods (`_generate_summary`, `_augment_summary_lean`, `_ground_historical_task_snapshot`, `_derive_trigger`, `_apply_threshold_tokens_cap` and others), and private helpers and constants in `agent.context_compressor` (the anchor index builder, its patterns, redaction, skill markers, `_typed_user_text`), `agent.conversation_compression`, `agent.auxiliary_client`, `agent.agent_init` and `agent.skill_commands`. These aren't a documented plugin API and can change in a Hermes update. That is why the startup check and fallback exist. `plugins.isolation: host` is untested; the engine is built and tested against the default in-process mode.
+
+The `bench/` scripts are separate and never loaded by Hermes. When you run them by hand, they read `~/.hermes/state.db` read-only, call your local model server, and write results to `~/.cache/hermes-vcc-engine/` at mode 0600. They print only counts, scores, ids and hashes. Section 7 describes the sandbox `bench/continuation.py` uses.

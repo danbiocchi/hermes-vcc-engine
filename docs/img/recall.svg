@@ -33,5 +33,5 @@
 <rect x="270" y="306" width="540" height="20" rx="5" fill="#1c2128"/>
 <rect x="270" y="306" width="373.8" height="20" rx="5" fill="#5c6670"/>
 <text x="653.8461538461538" y="321" font-size="14" font-weight="400" fill="#9198a1" text-anchor="start">18 / 26</text>
-<text x="24" y="352" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">All eight question types, including the ones where VCC does not lead, are in the README tables.</text>
+<text x="24" y="352" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">All eight question types, including the ones where VCC does not lead, are in docs/HOW-IT-WORKS.md, section 7.</text>
 </svg>
